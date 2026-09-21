@@ -110,3 +110,85 @@ export const AIDFLOW_ABI = {
     }
   }
 } as const;
+
+export const AIDFLOW_VIEM_ABI = [
+  {
+    type: "function",
+    name: "create_campaign",
+    inputs: [
+      { name: "organization", type: "address" },
+      { name: "title", type: "string" },
+      { name: "description", type: "string" },
+      { name: "milestone_amounts", type: "uint256[]" },
+      { name: "milestone_targets", type: "string[]" },
+      { name: "milestone_deadlines", type: "string[]" },
+      { name: "milestone_policies", type: "string[]" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "fund_campaign",
+    inputs: [{ name: "campaign_id", type: "uint256" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "payable",
+  },
+  {
+    type: "function",
+    name: "submit_evidence",
+    inputs: [
+      { name: "campaign_id", type: "uint256" },
+      { name: "milestone_id", type: "uint256" },
+      { name: "evidence_type", type: "string" },
+      { name: "uri", type: "string" },
+      { name: "metadata_hash", type: "string" },
+      { name: "description", type: "string" },
+      { name: "timestamp", type: "string" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "adjudicate_milestone",
+    inputs: [
+      { name: "campaign_id", type: "uint256" },
+      { name: "milestone_id", type: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "release_milestone",
+    inputs: [
+      { name: "campaign_id", type: "uint256" },
+      { name: "milestone_id", type: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "refund_campaign",
+    inputs: [{ name: "campaign_id", type: "uint256" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "claim_payout",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "claim_refund",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "nonpayable",
+  },
+] as const;
+

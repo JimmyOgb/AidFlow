@@ -2,7 +2,8 @@
 
 import React, { useState } from "react";
 import { Coins, X, CheckCircle2, AlertCircle } from "lucide-react";
-import { requestWalletConnection, getContractAddress, parseGEN, TxLifecycleState } from "../lib/genlayer";
+import { formatGEN, parseGEN, TxLifecycleState, sendContractTransaction, getContractAddress } from "../lib/genlayer";
+import TransactionConfirmPanel from "./TransactionConfirmPanel";
 
 interface FundModalProps {
   campaignId: number;
@@ -21,13 +22,13 @@ export default function FundModal({
   onClose,
   onSuccess,
 }: FundModalProps) {
-  const [amountGEN, setAmountGEN] = useState<string>("");
+  const [amountGEN, setAmountGEN] = useState("10");
   const [txState, setTxState] = useState<TxLifecycleState>("IDLE");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
-  const handleFund = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleFund = async () => {
     setErrorMessage(null);
     setTxHash(null);
 
@@ -38,25 +39,11 @@ export default function FundModal({
       }
 
       setTxState("AWAITING_WALLET");
-      const { address } = await requestWalletConnection();
-      setTxState("WALLET_CONFIRMATION");
 
-      const eth = (window as any).ethereum;
-      const contractAddr = getContractAddress();
-      if (!contractAddr || contractAddr.length !== 42) {
-        throw new Error("Invalid AidFlow contract address on StudioNet");
-      }
-
-      const txParams = {
-        from: address,
-        to: contractAddr,
-        value: `0x${valWei.toString(16)}`,
-      };
-
-      setTxState("SUBMITTED");
-      const submittedHash = await eth.request({
-        method: "eth_sendTransaction",
-        params: [txParams],
+      const submittedHash = await sendContractTransaction({
+        functionName: "fund_campaign",
+        args: [BigInt(campaignId)],
+        value: valWei,
       });
 
       if (!submittedHash || typeof submittedHash !== "string" || !submittedHash.startsWith("0x")) {
@@ -109,78 +96,93 @@ export default function FundModal({
           </div>
         </div>
 
-        <form onSubmit={handleFund} className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">Deposit Amount (GEN)</label>
-            <div className="relative">
-              <input
-                type="number"
-                step="0.1"
-                min="0.1"
-                required
-                placeholder="Enter GEN amount"
-                value={amountGEN}
-                onChange={(e) => setAmountGEN(e.target.value)}
-                disabled={txState === "AWAITING_WALLET" || txState === "PROCESSING"}
-                className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm font-bold text-white placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"
-              />
-              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-black text-amber-400">
-                GEN
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Funds lock into smart escrow. Release occurs only after GenLayer validator milestone consensus.
-            </p>
-          </div>
-
-          {/* Real Lifecycle Status */}
-          {txState !== "IDLE" && (
-            <div
-              className={`p-3.5 rounded-xl border text-xs space-y-1 ${
-                txState === "CONFIRMED"
-                  ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
-                  : txState === "FAILED"
-                  ? "bg-rose-950/20 border-rose-500/40 text-rose-300"
-                  : "bg-cyan-950/20 border-cyan-500/40 text-cyan-300"
-              }`}
-            >
-              <div className="flex items-center justify-between font-bold">
-                <span>Transaction Status: {txState}</span>
-                {txHash && (
-                  <span className="font-mono text-[10px]">
-                    Tx: {txHash.slice(0, 8)}...{txHash.slice(-6)}
-                  </span>
-                )}
+        {!showConfirm ? (
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-300">Deposit Amount (GEN)</label>
+              <div className="relative">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  required
+                  placeholder="Enter GEN amount"
+                  value={amountGEN}
+                  onChange={(e) => setAmountGEN(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl text-sm font-bold text-white placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-colors"
+                />
+                <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-black text-amber-400">
+                  GEN
+                </span>
               </div>
-              {txState === "AWAITING_WALLET" && <p>Approve the deposit in your StudioNet wallet...</p>}
-              {txState === "PROCESSING" && <p>Broadcast to StudioNet. Waiting for block receipt...</p>}
-              {txState === "CONFIRMED" && <p>Deposit confirmed! Escrow updated.</p>}
-              {errorMessage && <p className="text-rose-400">{errorMessage}</p>}
+              <p className="text-[11px] text-slate-500">
+                Funds lock into smart escrow. Release occurs only after GenLayer validator milestone consensus.
+              </p>
             </div>
-          )}
 
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={txState === "AWAITING_WALLET" || txState === "PROCESSING"}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all shadow-md shadow-amber-500/10 disabled:opacity-50"
-            >
-              {txState === "PROCESSING" || txState === "AWAITING_WALLET" ? (
-                <span className="animate-pulse">Processing...</span>
-              ) : (
-                "Confirm Escrow Deposit"
-              )}
-            </button>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (parseFloat(amountGEN) > 0) {
+                    setShowConfirm(true);
+                  }
+                }}
+                disabled={!amountGEN || parseFloat(amountGEN) <= 0}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all shadow-md shadow-amber-500/10 disabled:opacity-50"
+              >
+                Review Deposit Details
+              </button>
+            </div>
           </div>
-        </form>
+        ) : (
+          <div className="space-y-4">
+            <TransactionConfirmPanel
+              action="Fund Campaign Escrow"
+              amountGEN={amountGEN}
+              recipientLabel="AidFlow Smart Contract (Payable Escrow)"
+              recipientAddress={getContractAddress()}
+              explanation={`Transfers ${amountGEN} GEN to the AidFlow smart contract via fund_campaign(${campaignId}). Capital is locked in on-chain escrow and released in tranches only when GenLayer validators verify milestone deliverables.`}
+              isSubmitting={txState === "AWAITING_WALLET" || txState === "PROCESSING"}
+              onConfirm={handleFund}
+              onCancel={() => setShowConfirm(false)}
+            />
+
+            {txState !== "IDLE" && (
+              <div
+                className={`p-3.5 rounded-xl border text-xs space-y-1 ${
+                  txState === "CONFIRMED"
+                    ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
+                    : txState === "FAILED"
+                    ? "bg-rose-950/20 border-rose-500/40 text-rose-300"
+                    : "bg-cyan-950/20 border-cyan-500/40 text-cyan-300"
+                }`}
+              >
+                <div className="flex items-center justify-between font-bold">
+                  <span>Transaction Status: {txState}</span>
+                  {txHash && (
+                    <span className="font-mono text-[10px]">
+                      Tx: {txHash.slice(0, 8)}...{txHash.slice(-6)}
+                    </span>
+                  )}
+                </div>
+                {txState === "AWAITING_WALLET" && <p>Please approve the fund_campaign transaction in your wallet...</p>}
+                {txState === "PROCESSING" && <p>Broadcasting to StudioNet. Waiting for consensus receipt...</p>}
+                {txState === "CONFIRMED" && <p>Deposit confirmed! Escrow updated.</p>}
+                {errorMessage && <p className="text-rose-400">{errorMessage}</p>}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+

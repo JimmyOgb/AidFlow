@@ -3,7 +3,8 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, ShieldCheck, AlertCircle, CheckCircle2, Coins, ArrowRight } from "lucide-react";
-import { requestWalletConnection, getContractAddress, parseGEN, TxLifecycleState } from "../../lib/genlayer";
+import { getContractAddress, parseGEN, TxLifecycleState, sendContractTransaction } from "../../lib/genlayer";
+import TransactionConfirmPanel from "../../components/TransactionConfirmPanel";
 
 interface MilestoneDraft {
   target: string;
@@ -29,6 +30,7 @@ export default function CreateCampaignPage() {
   const [txState, setTxState] = useState<TxLifecycleState>("IDLE");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const addMilestone = () => {
     setMilestones([
@@ -47,62 +49,60 @@ export default function CreateCampaignPage() {
     setMilestones(milestones.filter((_, i) => i !== idx));
   };
 
-  const updateMilestone = (idx: number, field: keyof MilestoneDraft, val: string) => {
+  const updateMilestone = (idx: number, field: keyof MilestoneDraft, value: string) => {
     const updated = [...milestones];
-    updated[idx][field] = val;
+    updated[idx][field] = value;
     setMilestones(updated);
   };
 
   const totalGEN = milestones.reduce((acc, m) => acc + (parseFloat(m.amountGEN) || 0), 0);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const validateForm = () => {
+    if (!organization.trim()) throw new Error("Organization address is required");
+    if (!organization.startsWith("0x") || organization.length !== 42) {
+      throw new Error("Invalid organization address (must be a valid 42-character 0x EVM hex address)");
+    }
+    if (!title.trim()) throw new Error("Campaign title is required");
+    if (!description.trim()) throw new Error("Campaign description is required");
+    if (milestones.length === 0) throw new Error("At least one milestone is required");
+
+    for (let i = 0; i < milestones.length; i++) {
+      const m = milestones[i];
+      if (!m.target.trim()) throw new Error(`Milestone #${i + 1} target title is required`);
+      const amt = parseFloat(m.amountGEN);
+      if (isNaN(amt) || amt <= 0) throw new Error(`Milestone #${i + 1} must have an amount greater than 0 GEN`);
+      if (!m.policy.trim()) throw new Error(`Milestone #${i + 1} verification policy is required`);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
+    try {
+      validateForm();
+      setShowConfirm(true);
+    } catch (err: any) {
+      setErrorMessage(err.message);
+    }
+  };
+
+  const handleCreateCampaign = async () => {
     setErrorMessage(null);
     setTxHash(null);
 
     try {
-      if (!title.trim()) throw new Error("Campaign title is required");
-      if (!description.trim()) throw new Error("Campaign description is required");
-      if (!organization.startsWith("0x") || organization.length !== 42) {
-        throw new Error("Invalid organization address (must be a valid 42-character 0x EVM hex address)");
-      }
-      if (milestones.length === 0) {
-        throw new Error("At least one milestone tranche is required");
-      }
-      for (let i = 0; i < milestones.length; i++) {
-        const m = milestones[i];
-        if (!m.target.trim()) throw new Error(`Milestone #${i + 1} target description is required`);
-        const amt = parseFloat(m.amountGEN);
-        if (isNaN(amt) || amt <= 0) throw new Error(`Milestone #${i + 1} must have an amount greater than 0 GEN`);
-        if (!m.policy.trim()) throw new Error(`Milestone #${i + 1} verification policy is required`);
-      }
-
+      validateForm();
       setTxState("AWAITING_WALLET");
-      const { address } = await requestWalletConnection();
-      setTxState("WALLET_CONFIRMATION");
 
-      const eth = (window as any).ethereum;
-      const contractAddr = getContractAddress();
-      if (!contractAddr || contractAddr.length !== 42) {
-        throw new Error("No active AidFlow contract address configured for StudioNet");
-      }
+      const amounts = milestones.map((m) => parseGEN(m.amountGEN));
+      const targets = milestones.map((m) => m.target);
+      const deadlines = milestones.map((m) => m.deadline);
+      const policies = milestones.map((m) => m.policy);
 
-      // Real contract write transaction
-      const txParams = {
-        from: address,
-        to: contractAddr,
-        data: "0x_create_campaign",
-      };
-
-      setTxState("SUBMITTED");
-      const submittedHash = await eth.request({
-        method: "eth_sendTransaction",
-        params: [txParams],
+      const submittedHash = await sendContractTransaction({
+        functionName: "create_campaign",
+        args: [organization, title, description, amounts, targets, deadlines, policies],
       });
-
-      if (!submittedHash || typeof submittedHash !== "string" || !submittedHash.startsWith("0x")) {
-        throw new Error("Transaction was rejected or failed to return a valid hash");
-      }
 
       setTxHash(submittedHash);
       setTxState("PROCESSING");
@@ -310,21 +310,27 @@ export default function CreateCampaignPage() {
           </div>
         )}
 
-        {/* Submit Button */}
-        <button
-          type="submit"
-          disabled={txState === "AWAITING_WALLET" || txState === "PROCESSING"}
-          className="w-full py-3.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 transition-all shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {txState === "PROCESSING" || txState === "AWAITING_WALLET" ? (
-            <span className="animate-pulse">Broadcasting to StudioNet...</span>
-          ) : (
-            <>
-              Deploy Campaign to StudioNet Escrow
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
-        </button>
+        {showConfirm ? (
+          <TransactionConfirmPanel
+            action="Create Aid Campaign"
+            amountGEN="0.00"
+            recipientLabel="AidFlow Contract (Campaign Registry)"
+            recipientAddress={getContractAddress()}
+            explanation={`Registers a new campaign titled "${title}" targeting organization ${organization.slice(0, 10)}... with ${milestones.length} milestone tranche(s) totaling ${milestones.reduce((acc, m) => acc + (parseFloat(m.amountGEN) || 0), 0)} GEN.`}
+            isSubmitting={txState === "AWAITING_WALLET" || txState === "PROCESSING"}
+            onConfirm={handleCreateCampaign}
+            onCancel={() => setShowConfirm(false)}
+          />
+        ) : (
+          <button
+            type="submit"
+            disabled={txState === "AWAITING_WALLET" || txState === "PROCESSING"}
+            className="w-full py-3.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 transition-all shadow-lg shadow-emerald-500/10 flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            Review & Deploy Campaign to StudioNet
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        )}
       </form>
     </div>
   );

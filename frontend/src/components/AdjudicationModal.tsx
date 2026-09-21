@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { Cpu, X, CheckCircle2, AlertTriangle, XCircle, Clock, ShieldCheck, Scale, ArrowRight, ExternalLink } from "lucide-react";
 import { Milestone, AdjudicationResult } from "../lib/types";
-import { formatGEN, requestWalletConnection, getContractAddress, TxLifecycleState } from "../lib/genlayer";
+import { formatGEN, TxLifecycleState, sendContractTransaction, getContractAddress } from "../lib/genlayer";
 
 interface AdjudicationModalProps {
   campaignId: number;
@@ -36,31 +36,10 @@ export default function AdjudicationModal({
       setAdjTxHash(null);
       setAdjState("AWAITING_WALLET");
       
-      const { address } = await requestWalletConnection();
-      setAdjState("WALLET_CONFIRMATION");
-      
-      const eth = (window as any).ethereum;
-      const contractAddr = getContractAddress();
-      if (!contractAddr || contractAddr.length !== 42) {
-        throw new Error("Invalid AidFlow contract address on StudioNet");
-      }
-
-      // Trigger adjudicate_milestone(campaign_id, milestone_id)
-      const txParams = {
-        from: address,
-        to: contractAddr,
-        data: "0x",
-      };
-
-      setAdjState("SUBMITTED");
-      const submittedHash = await eth.request({
-        method: "eth_sendTransaction",
-        params: [txParams],
+      const submittedHash = await sendContractTransaction({
+        functionName: "adjudicate_milestone",
+        args: [BigInt(campaignId), BigInt(milestone.id)],
       });
-
-      if (!submittedHash || typeof submittedHash !== "string" || !submittedHash.startsWith("0x")) {
-        throw new Error("Adjudication transaction was rejected or returned an invalid hash");
-      }
 
       setAdjTxHash(submittedHash);
       setAdjState("ADJUDICATING");
@@ -82,31 +61,10 @@ export default function AdjudicationModal({
       setReleaseTxHash(null);
       setReleaseState("AWAITING_WALLET");
 
-      const { address } = await requestWalletConnection();
-      setReleaseState("WALLET_CONFIRMATION");
-
-      const eth = (window as any).ethereum;
-      const contractAddr = getContractAddress();
-      if (!contractAddr || contractAddr.length !== 42) {
-        throw new Error("Invalid AidFlow contract address on StudioNet");
-      }
-
-      // Trigger release_milestone(campaign_id, milestone_id)
-      const txParams = {
-        from: address,
-        to: contractAddr,
-        data: "0x",
-      };
-
-      setReleaseState("SUBMITTED");
-      const submittedHash = await eth.request({
-        method: "eth_sendTransaction",
-        params: [txParams],
+      const submittedHash = await sendContractTransaction({
+        functionName: "release_milestone",
+        args: [BigInt(campaignId), BigInt(milestone.id)],
       });
-
-      if (!submittedHash || typeof submittedHash !== "string" || !submittedHash.startsWith("0x")) {
-        throw new Error("Release transaction was rejected or returned an invalid hash");
-      }
 
       setReleaseTxHash(submittedHash);
       setReleaseState("PROCESSING");

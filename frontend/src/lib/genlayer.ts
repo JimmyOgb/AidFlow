@@ -13,6 +13,8 @@ export const GENLAYER_STUDIONET = {
   },
 };
 
+export const STUDIONET_CHAIN_ID = GENLAYER_STUDIONET.id;
+
 export type TxLifecycleState =
   | "IDLE"
   | "AWAITING_WALLET"
@@ -58,35 +60,91 @@ export async function requestWalletConnection(): Promise<{ address: string; chai
   }
   const chainIdHex = await eth.request({ method: "eth_chainId" });
   const chainId = parseInt(chainIdHex, 16);
+  return { address: accounts[0], chainId };
+}
 
-  // Prompt network switch to StudioNet (61999) exclusively
-  if (chainId !== GENLAYER_STUDIONET.id) {
-    try {
+export async function switchToStudioNet(): Promise<void> {
+  if (typeof window === "undefined" || !("ethereum" in window)) {
+    throw new Error("No Web3 wallet found. Please install MetaMask or another EVM wallet.");
+  }
+  const eth = (window as any).ethereum;
+  const hexChainId = `0x${GENLAYER_STUDIONET.id.toString(16)}`;
+
+  try {
+    await eth.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: hexChainId }],
+    });
+  } catch (switchError: any) {
+    // Error code 4902 indicates that the chain has not been added yet
+    if (switchError.code === 4902 || switchError?.data?.originalError?.code === 4902) {
       await eth.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: `0x${GENLAYER_STUDIONET.id.toString(16)}` }],
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: hexChainId,
+            chainName: GENLAYER_STUDIONET.name,
+            rpcUrls: GENLAYER_STUDIONET.rpcUrls.default.http,
+            nativeCurrency: GENLAYER_STUDIONET.nativeCurrency,
+          },
+        ],
       });
-    } catch (switchError: any) {
-      if (switchError.code === 4902) {
-        await eth.request({
-          method: "wallet_addEthereumChain",
-          params: [
-            {
-              chainId: `0x${GENLAYER_STUDIONET.id.toString(16)}`,
-              chainName: GENLAYER_STUDIONET.name,
-              rpcUrls: GENLAYER_STUDIONET.rpcUrls.default.http,
-              nativeCurrency: GENLAYER_STUDIONET.nativeCurrency,
-              blockExplorerUrls: [GENLAYER_STUDIONET.blockExplorers.default.url],
-            },
-          ],
-        });
-      } else {
-        throw switchError;
-      }
+    } else {
+      throw switchError;
     }
   }
+}
 
-  return { address: accounts[0], chainId };
+export async function sendContractTransaction({
+  functionName,
+  args = [],
+  value = BigInt(0),
+}: {
+  functionName: string;
+  args?: any[];
+  value?: bigint;
+}): Promise<string> {
+  const { address, chainId } = await requestWalletConnection();
+
+  if (chainId !== GENLAYER_STUDIONET.id) {
+    await switchToStudioNet();
+  }
+
+  const contract = getContractAddress();
+  if (!contract || contract.length !== 42) {
+    throw new Error("Invalid AidFlow contract address on StudioNet");
+  }
+
+  const { encodeFunctionData } = await import("viem");
+  const { AIDFLOW_VIEM_ABI } = await import("../contracts/abi");
+
+  const calldata = encodeFunctionData({
+    abi: AIDFLOW_VIEM_ABI,
+    functionName: functionName as any,
+    args: args as any,
+  });
+
+  const eth = (window as any).ethereum;
+  const txParams: Record<string, string> = {
+    from: address,
+    to: contract,
+    data: calldata,
+  };
+
+  if (value > BigInt(0)) {
+    txParams.value = `0x${value.toString(16)}`;
+  }
+
+  const txHash = await eth.request({
+    method: "eth_sendTransaction",
+    params: [txParams],
+  });
+
+  if (!txHash || typeof txHash !== "string" || !txHash.startsWith("0x")) {
+    throw new Error("Transaction was rejected or returned an invalid hash");
+  }
+
+  return txHash;
 }
 
 // Low-level GenLayer StudioNet RPC caller targeting https://studio.genlayer.com/api

@@ -61,5 +61,6 @@ export interface Campaign {
   released_amount: bigint | number;
   refunded_amount: bigint | number;
   status: string;
+  created_at?: string;
   milestone_count: number;
 }

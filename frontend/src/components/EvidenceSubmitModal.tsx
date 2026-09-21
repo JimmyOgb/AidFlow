@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Upload, X, CheckCircle2, AlertCircle, FileText, Image as ImageIcon, MapPin, Users, Globe, Hash } from "lucide-react";
-import { requestWalletConnection, getContractAddress, TxLifecycleState } from "../lib/genlayer";
+import { getContractAddress, TxLifecycleState, sendContractTransaction } from "../lib/genlayer";
 import { EvidenceType } from "../lib/types";
 
 interface EvidenceSubmitModalProps {
@@ -38,14 +38,18 @@ export default function EvidenceSubmitModal({
     { type: "WEB_EVIDENCE", label: "Public Web Verification", icon: Globe },
   ];
 
-  const handleComputeHash = async () => {
-    if (!description && !uri) return;
+  const calculateSha256 = async (text: string) => {
     const encoder = new TextEncoder();
-    const data = encoder.encode(`${uri}:${description}:${Date.now()}`);
+    const data = encoder.encode(text);
     const hashBuffer = await crypto.subtle.digest("SHA-256", data);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = "0x" + hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
     setMetadataHash(hashHex);
+  };
+
+  const handleComputeHash = async () => {
+    if (!description && !uri) return;
+    await calculateSha256(`${uri}:${description}:${Date.now()}`);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -59,25 +63,19 @@ export default function EvidenceSubmitModal({
       if (!metadataHash.trim()) throw new Error("Document integrity hash is required");
 
       setTxState("AWAITING_WALLET");
-      const { address } = await requestWalletConnection();
-      setTxState("WALLET_CONFIRMATION");
 
-      const eth = (window as any).ethereum;
-      const contractAddr = getContractAddress();
-      if (!contractAddr || contractAddr.length !== 42) {
-        throw new Error("Invalid AidFlow contract address on StudioNet");
-      }
-
-      const txParams = {
-        from: address,
-        to: contractAddr,
-        data: "0x",
-      };
-
-      setTxState("SUBMITTED");
-      const submittedHash = await eth.request({
-        method: "eth_sendTransaction",
-        params: [txParams],
+      const timestamp = new Date().toISOString();
+      const submittedHash = await sendContractTransaction({
+        functionName: "submit_evidence",
+        args: [
+          BigInt(campaignId),
+          BigInt(milestoneId),
+          evidenceType,
+          uri,
+          metadataHash,
+          description,
+          timestamp,
+        ],
       });
 
       if (!submittedHash || typeof submittedHash !== "string" || !submittedHash.startsWith("0x")) {

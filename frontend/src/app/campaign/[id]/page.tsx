@@ -23,14 +23,15 @@ import {
 import {
   genlayerCall,
   formatGEN,
-  requestWalletConnection,
   getContractAddress,
   TxLifecycleState,
+  sendContractTransaction,
 } from "../../../lib/genlayer";
 import { Campaign, Milestone, EvidenceRef } from "../../../lib/types";
 import FundModal from "../../../components/FundModal";
 import EvidenceSubmitModal from "../../../components/EvidenceSubmitModal";
 import AdjudicationModal from "../../../components/AdjudicationModal";
+import TransactionConfirmPanel from "../../../components/TransactionConfirmPanel";
 
 export default function CampaignDetailPage() {
   const params = useParams();
@@ -53,6 +54,14 @@ export default function CampaignDetailPage() {
   const [showFundModal, setShowFundModal] = useState(false);
   const [selectedMilestoneForEvidence, setSelectedMilestoneForEvidence] = useState<Milestone | null>(null);
   const [selectedMilestoneForAdjudication, setSelectedMilestoneForAdjudication] = useState<Milestone | null>(null);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    action: string;
+    amountGEN?: string;
+    recipientLabel: string;
+    recipientAddress: string;
+    explanation: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
 
   const loadData = async () => {
     try {
@@ -76,7 +85,20 @@ export default function CampaignDetailPage() {
         return;
       }
 
-      setCampaign(camp);
+      setCampaign({
+        id: cid,
+        donor: camp.donor,
+        organization: camp.organization,
+        title: camp.title,
+        description: camp.description,
+        total_funding: BigInt(camp.total_amount || camp.total_funding || 0),
+        funded_amount: BigInt(camp.funded_amount || 0),
+        released_amount: BigInt(camp.released_amount || 0),
+        refunded_amount: BigInt(camp.refunded_amount || 0),
+        status: camp.status || "CREATED",
+        created_at: camp.created_at || "",
+        milestone_count: camp.milestone_count || 0,
+      });
 
       const msList = await genlayerCall("get_campaign_milestones", [cid]);
       const validMilestones: Milestone[] = msList || [];
@@ -102,10 +124,11 @@ export default function CampaignDetailPage() {
         const accounts = await eth.request({ method: "eth_accounts" });
         if (accounts && accounts.length > 0) {
           const userAddr = accounts[0];
-          const orgClaim = await genlayerCall("get_claimable_payout", [userAddr]);
-          const donorClaim = await genlayerCall("get_claimable_refund", [userAddr]);
-          if (orgClaim !== null) setClaimablePayout(BigInt(orgClaim));
-          if (donorClaim !== null) setClaimableRefund(BigInt(donorClaim));
+          const userBalances = await genlayerCall("get_claimable_balances", [userAddr]);
+          if (userBalances) {
+            setClaimablePayout(BigInt(userBalances.organization_claimable || 0));
+            setClaimableRefund(BigInt(userBalances.donor_claimable || 0));
+          }
         }
       }
     } catch (err: any) {
@@ -122,27 +145,15 @@ export default function CampaignDetailPage() {
     loadData();
   }, [cid]);
 
-  const handleReleaseTranche = async (milestoneId: number) => {
+  const executeReleaseTranche = async (milestoneId: number) => {
     try {
       setActionTxState("AWAITING_WALLET");
       setActionError(null);
       setActionTxHash(null);
 
-      const { address } = await requestWalletConnection();
-      setActionTxState("WALLET_CONFIRMATION");
-
-      const eth = (window as any).ethereum;
-      const contractAddr = getContractAddress();
-
-      const txHash = await eth.request({
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: address,
-            to: contractAddr,
-            data: `0x_release_${cid}_${milestoneId}`,
-          },
-        ],
+      const txHash = await sendContractTransaction({
+        functionName: "release_milestone",
+        args: [BigInt(cid), BigInt(milestoneId)],
       });
 
       setActionTxHash(txHash);
@@ -151,6 +162,7 @@ export default function CampaignDetailPage() {
       setTimeout(() => {
         setActionTxState("CONFIRMED");
         loadData();
+        setConfirmConfig(null);
       }, 2500);
     } catch (err: any) {
       setActionError(err.message || "Failed to release tranche");
@@ -158,27 +170,26 @@ export default function CampaignDetailPage() {
     }
   };
 
-  const handleClaimPayout = async () => {
+  const handleReleaseTranche = (milestone: Milestone) => {
+    setConfirmConfig({
+      action: "Release Milestone Tranche",
+      amountGEN: (Number(milestone.amount) / 1e18).toFixed(2),
+      recipientLabel: "Organization Claimable Balance",
+      recipientAddress: campaign?.organization || getContractAddress(),
+      explanation: `Releases the verified tranche of ${formatGEN(milestone.amount)} from escrow into the organization's claimable ledger. Tranche must have passed GenLayer validator consensus.`,
+      onConfirm: () => executeReleaseTranche(milestone.id),
+    });
+  };
+
+  const executeClaimPayout = async () => {
     try {
       setActionTxState("AWAITING_WALLET");
       setActionError(null);
       setActionTxHash(null);
 
-      const { address } = await requestWalletConnection();
-      setActionTxState("WALLET_CONFIRMATION");
-
-      const eth = (window as any).ethereum;
-      const contractAddr = getContractAddress();
-
-      const txHash = await eth.request({
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: address,
-            to: contractAddr,
-            data: "0x_claim_payout",
-          },
-        ],
+      const txHash = await sendContractTransaction({
+        functionName: "claim_payout",
+        args: [],
       });
 
       setActionTxHash(txHash);
@@ -187,11 +198,59 @@ export default function CampaignDetailPage() {
       setTimeout(() => {
         setActionTxState("CONFIRMED");
         loadData();
+        setConfirmConfig(null);
       }, 2500);
     } catch (err: any) {
       setActionError(err.message || "Failed to claim payout");
       setActionTxState("FAILED");
     }
+  };
+
+  const handleClaimPayout = () => {
+    setConfirmConfig({
+      action: "Claim Organization Payout",
+      amountGEN: (Number(claimablePayout) / 1e18).toFixed(2),
+      recipientLabel: "Registered Organization Address",
+      recipientAddress: campaign?.organization || "Your Connected Wallet",
+      explanation: `Calls claim_payout() on AidFlow contract. Zeroes your claimable balance on-chain and transfers ${formatGEN(claimablePayout)} native GEN directly to your registered organization wallet.`,
+      onConfirm: executeClaimPayout,
+    });
+  };
+
+  const executeClaimRefund = async () => {
+    try {
+      setActionTxState("AWAITING_WALLET");
+      setActionError(null);
+      setActionTxHash(null);
+
+      const txHash = await sendContractTransaction({
+        functionName: "claim_refund",
+        args: [],
+      });
+
+      setActionTxHash(txHash);
+      setActionTxState("SUBMITTED");
+
+      setTimeout(() => {
+        setActionTxState("CONFIRMED");
+        loadData();
+        setConfirmConfig(null);
+      }, 2500);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to claim refund");
+      setActionTxState("FAILED");
+    }
+  };
+
+  const handleClaimRefund = () => {
+    setConfirmConfig({
+      action: "Claim Donor Refund",
+      amountGEN: (Number(claimableRefund) / 1e18).toFixed(2),
+      recipientLabel: "Donor Wallet Address",
+      recipientAddress: campaign?.donor || "Your Connected Wallet",
+      explanation: `Calls claim_refund() on AidFlow contract. Reclaims ${formatGEN(claimableRefund)} unreleased escrow capital back to your donor wallet.`,
+      onConfirm: executeClaimRefund,
+    });
   };
 
   if (isLoading) {
@@ -321,6 +380,15 @@ export default function CampaignDetailPage() {
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-md shadow-purple-600/20 flex items-center gap-2"
               >
                 Claim Payout ({formatGEN(claimablePayout)})
+              </button>
+            )}
+
+            {claimableRefund > BigInt(0) && (
+              <button
+                onClick={handleClaimRefund}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition-all shadow-md shadow-amber-600/20 flex items-center gap-2"
+              >
+                Claim Refund ({formatGEN(claimableRefund)})
               </button>
             )}
           </div>
@@ -498,7 +566,7 @@ export default function CampaignDetailPage() {
 
                     {isPassed && !isReleased && (
                       <button
-                        onClick={() => handleReleaseTranche(m.id)}
+                        onClick={() => handleReleaseTranche(m)}
                         disabled={actionTxState === "PROCESSING" || actionTxState === "AWAITING_WALLET"}
                         className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950 transition-all shadow-md shadow-emerald-500/20"
                       >
@@ -549,6 +617,23 @@ export default function CampaignDetailPage() {
           onClose={() => setSelectedMilestoneForAdjudication(null)}
           onRefresh={loadData}
         />
+      )}
+
+      {confirmConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="glass-card rounded-2xl border border-slate-800 w-full max-w-md p-6">
+            <TransactionConfirmPanel
+              action={confirmConfig.action}
+              amountGEN={confirmConfig.amountGEN}
+              recipientLabel={confirmConfig.recipientLabel}
+              recipientAddress={confirmConfig.recipientAddress}
+              explanation={confirmConfig.explanation}
+              onConfirm={confirmConfig.onConfirm}
+              onCancel={() => setConfirmConfig(null)}
+              isSubmitting={actionTxState === "AWAITING_WALLET" || actionTxState === "PROCESSING"}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

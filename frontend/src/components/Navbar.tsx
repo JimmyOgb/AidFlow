@@ -4,33 +4,81 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ShieldCheck, Wallet, ExternalLink, Activity, PlusCircle, Compass } from "lucide-react";
-import { requestWalletConnection } from "../lib/genlayer";
+import { requestWalletConnection, switchToStudioNet, STUDIONET_CHAIN_ID } from "../lib/genlayer";
 
 export default function Navbar() {
   const pathname = usePathname();
   const [account, setAccount] = useState<string | null>(null);
+  const [chainId, setChainId] = useState<number | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isSwitchingNetwork, setIsSwitchingNetwork] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined" && "ethereum" in window) {
       const eth = (window as any).ethereum;
-      eth.request({ method: "eth_accounts" }).then((accounts: string[]) => {
+
+      const updateWalletState = async () => {
+        try {
+          const accounts = await eth.request({ method: "eth_accounts" });
+          if (accounts && accounts.length > 0) {
+            setAccount(accounts[0]);
+          } else {
+            setAccount(null);
+          }
+
+          const currentChainHex = await eth.request({ method: "eth_chainId" });
+          if (currentChainHex) {
+            setChainId(parseInt(currentChainHex, 16));
+          }
+        } catch {}
+      };
+
+      updateWalletState();
+
+      const handleAccountsChanged = (accounts: string[]) => {
         if (accounts && accounts.length > 0) {
           setAccount(accounts[0]);
+        } else {
+          setAccount(null);
         }
-      }).catch(() => {});
+      };
+
+      const handleChainChanged = (newChainHex: string) => {
+        setChainId(parseInt(newChainHex, 16));
+      };
+
+      eth.on?.("accountsChanged", handleAccountsChanged);
+      eth.on?.("chainChanged", handleChainChanged);
+
+      return () => {
+        eth.removeListener?.("accountsChanged", handleAccountsChanged);
+        eth.removeListener?.("chainChanged", handleChainChanged);
+      };
     }
   }, []);
 
   const handleConnect = async () => {
     try {
       setIsConnecting(true);
-      const { address } = await requestWalletConnection();
+      const { address, chainId: cId } = await requestWalletConnection();
       setAccount(address);
+      setChainId(cId);
     } catch (err: any) {
       alert(err.message || "Failed to connect wallet");
     } finally {
       setIsConnecting(false);
+    }
+  };
+
+  const handleSwitchNetwork = async () => {
+    try {
+      setIsSwitchingNetwork(true);
+      await switchToStudioNet();
+      setChainId(STUDIONET_CHAIN_ID);
+    } catch (err: any) {
+      alert(err.message || "Failed to switch to StudioNet");
+    } finally {
+      setIsSwitchingNetwork(false);
     }
   };
 
@@ -82,10 +130,21 @@ export default function Navbar() {
 
         {/* Network status and Wallet Connect */}
         <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-800 text-xs text-slate-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-            <span>StudioNet (61999)</span>
-          </div>
+          {account && chainId && chainId !== STUDIONET_CHAIN_ID ? (
+            <button
+              onClick={handleSwitchNetwork}
+              disabled={isSwitchingNetwork}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-xs text-amber-400 hover:bg-amber-500/20 transition-all cursor-pointer"
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+              <span>{isSwitchingNetwork ? "Switching..." : "Switch to StudioNet"}</span>
+            </button>
+          ) : (
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 border border-slate-800 text-xs text-slate-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>StudioNet (61999)</span>
+            </div>
+          )}
 
           <button
             onClick={handleConnect}
