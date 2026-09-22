@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, ShieldCheck, AlertCircle, CheckCircle2, Coins, ArrowRight } from "lucide-react";
-import { getContractAddress, parseGEN, TxLifecycleState, sendContractTransaction } from "../../lib/genlayer";
+import { getContractAddress, parseGEN, TxLifecycleState, sendContractTransaction, waitForTransactionReceipt } from "../../lib/genlayer";
 import TransactionConfirmPanel from "../../components/TransactionConfirmPanel";
 
 interface MilestoneDraft {
@@ -107,13 +107,13 @@ export default function CreateCampaignPage() {
       setTxHash(submittedHash);
       setTxState("PROCESSING");
 
-      // Wait for network confirmation
+      // Wait for real on-chain transaction receipt
+      await waitForTransactionReceipt(submittedHash);
+
+      setTxState("CONFIRMED");
       setTimeout(() => {
-        setTxState("CONFIRMED");
-        setTimeout(() => {
-          router.push("/explorer");
-        }, 2000);
-      }, 3000);
+        router.push("/explorer");
+      }, 1500);
     } catch (err: any) {
       console.error("Create campaign transaction failed:", err);
       setErrorMessage(err.message || "Failed to create campaign on StudioNet");

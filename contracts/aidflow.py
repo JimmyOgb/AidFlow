@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any
+import genlayer.gl as gl
 from genlayer import *
 
 ERROR_EXPECTED = "[EXPECTED]"
@@ -137,6 +138,9 @@ class AidFlow(gl.Contract):
     evidence_records: TreeMap[str, EvidenceRef]
     org_claimable: TreeMap[Address, u256]
     donor_claimable: TreeMap[Address, u256]
+    contributions: TreeMap[str, u256]
+    contributor_counts: TreeMap[u256, u256]
+    contributor_addrs: TreeMap[str, Address]
 
     def __init__(self):
         self.campaign_count = 0
@@ -235,6 +239,33 @@ class AidFlow(gl.Contract):
             "donor_claimable": self.donor_claimable.get(acc, 0),
         }
 
+    def _has_failed_milestone(self, campaign_id: u256) -> bool:
+        c = self.campaigns[campaign_id]
+        for i in range(c.milestone_count):
+            m = self.milestones[self._mkey(campaign_id, i)]
+            if m.status == STATUS_FAILED:
+                return True
+        return False
+
+    @gl.public.view
+    def is_campaign_refundable(self, campaign_id: u256) -> bool:
+        if campaign_id >= self.campaign_count:
+            return False
+        c = self.campaigns[campaign_id]
+        if c.status == STATUS_REFUNDED:
+            return False
+        unreleased = c.funded_amount - c.released_amount - c.refunded_amount
+        if unreleased == 0:
+            return False
+        return self._has_failed_milestone(campaign_id)
+
+    @gl.public.view
+    def get_contributor_amount(self, campaign_id: u256, contributor: Address) -> u256:
+        if campaign_id >= self.campaign_count:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign not found")
+        ckey = f"{campaign_id}_{_addr_hex(_to_addr(contributor))}"
+        return self.contributions.get(ckey, 0)
+
     # -------------------------------------------------------------------------
     # Campaign Creation & Escrow Management
     # -------------------------------------------------------------------------
@@ -321,6 +352,15 @@ class AidFlow(gl.Contract):
         if c.funded_amount + deposit > c.total_funding:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Deposit exceeds total required funding")
 
+        sender = _to_addr(gl.message.sender_address)
+        ckey = f"{campaign_id}_{_addr_hex(sender)}"
+        prev_contrib = self.contributions.get(ckey, 0)
+        if prev_contrib == 0:
+            c_count = self.contributor_counts.get(campaign_id, 0)
+            self.contributor_addrs[f"{campaign_id}_{c_count}"] = sender
+            self.contributor_counts[campaign_id] = c_count + 1
+        self.contributions[ckey] = prev_contrib + deposit
+
         c.funded_amount += deposit
         if c.funded_amount == c.total_funding:
             c.status = STATUS_FUNDED
@@ -344,6 +384,8 @@ class AidFlow(gl.Contract):
         if campaign_id >= self.campaign_count:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign not found")
         c = self.campaigns[campaign_id]
+        if c.status == STATUS_REFUNDED:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign is refunded: no evidence can be submitted")
         if sender != _to_addr(c.organization):
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Only organization can submit evidence")
 
@@ -383,6 +425,8 @@ class AidFlow(gl.Contract):
         if campaign_id >= self.campaign_count:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign not found")
         c = self.campaigns[campaign_id]
+        if c.status == STATUS_REFUNDED:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign is refunded: milestone cannot be adjudicated")
         if milestone_id >= c.milestone_count:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Milestone not found")
 
@@ -553,6 +597,8 @@ Respond strictly in valid JSON format with this exact schema:
         if campaign_id >= self.campaign_count:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign not found")
         c = self.campaigns[campaign_id]
+        if c.status == STATUS_REFUNDED:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign is refunded: milestone tranche cannot be released")
         if milestone_id >= c.milestone_count:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Milestone not found")
 
@@ -587,21 +633,57 @@ Respond strictly in valid JSON format with this exact schema:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign not found")
         c = self.campaigns[campaign_id]
 
-        if sender != _to_addr(c.donor):
-            raise gl.vm.UserError(f"{ERROR_EXPECTED} Only donor can trigger refund")
+        # Post-refund protection: prevent second refund
+        if c.status == STATUS_REFUNDED:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Campaign is already refunded")
+
+        # Requirement 4: Require an explicit on-chain refund condition
+        # A refund is only valid when at least one milestone has been adjudicated as FAILED
+        if not self._has_failed_milestone(campaign_id):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Campaign does not meet refund condition: requires an adjudicated failed milestone"
+            )
+
+        # Access control: only campaign creator/donor or a contributor who actually funded can trigger refund
+        is_donor = (sender == _to_addr(c.donor))
+        ckey_sender = f"{campaign_id}_{_addr_hex(sender)}"
+        is_contributor = (self.contributions.get(ckey_sender, 0) > 0)
+        if not (is_donor or is_contributor):
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Only donor or contributor can trigger refund")
 
         unreleased = c.funded_amount - c.released_amount - c.refunded_amount
         if unreleased <= 0:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} No unreleased funds available for refund")
 
+        # Requirement 3: Fix refund ownership. Attribute refunds strictly to actual contributors
+        # based on their share of funded escrow. Campaign creator cannot redirect contributor funds.
+        num_contributors = self.contributor_counts.get(campaign_id, 0)
+        total_funded = c.funded_amount
+        allocated: u256 = 0
+
+        for i in range(num_contributors):
+            c_addr = self.contributor_addrs[f"{campaign_id}_{i}"]
+            ckey = f"{campaign_id}_{_addr_hex(c_addr)}"
+            c_contrib = self.contributions.get(ckey, 0)
+            if c_contrib > 0:
+                if i == num_contributors - 1:
+                    # Final contributor receives exact remaining unreleased balance to avoid truncation loss
+                    refund_share = unreleased - allocated
+                else:
+                    refund_share = (c_contrib * unreleased) // total_funded
+                    allocated += refund_share
+
+                # Clear contributor record for this campaign to prevent double-refund
+                self.contributions[ckey] = 0
+
+                # Credit contributor's personal refund claimable ledger
+                curr_claimable = self.donor_claimable.get(c_addr, 0)
+                self.donor_claimable[c_addr] = curr_claimable + refund_share
+
+        # Terminal state transition: permanently marks campaign as REFUNDED
         c.refunded_amount += unreleased
         c.status = STATUS_REFUNDED
         self.campaigns[campaign_id] = c
-
-        # Credit donor claimable ledger
-        donor_addr = _to_addr(c.donor)
-        current_refund = self.donor_claimable.get(donor_addr, 0)
-        self.donor_claimable[donor_addr] = current_refund + unreleased
 
     # -------------------------------------------------------------------------
     # Payout & Refund Claim Execution
@@ -612,7 +694,13 @@ Respond strictly in valid JSON format with this exact schema:
         amount = self.org_claimable.get(sender, 0)
         if amount == 0:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} No claimable payout balance")
+
+        # Safely zero ledger BEFORE transferring (checks-effects-interactions pattern to prevent reentrancy / double claim)
         self.org_claimable[sender] = 0
+
+        # Transfer exact native GEN amount to caller using supported GenLayer native transfer mechanism
+        gl.get_contract_at(sender).emit_transfer(value=amount)
+
         return amount
 
     @gl.public.write
@@ -621,5 +709,11 @@ Respond strictly in valid JSON format with this exact schema:
         amount = self.donor_claimable.get(sender, 0)
         if amount == 0:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} No claimable refund balance")
+
+        # Safely zero ledger BEFORE transferring (checks-effects-interactions pattern to prevent double refund)
         self.donor_claimable[sender] = 0
+
+        # Transfer exact native GEN amount to caller using supported GenLayer native transfer mechanism
+        gl.get_contract_at(sender).emit_transfer(value=amount)
+
         return amount

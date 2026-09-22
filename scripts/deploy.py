@@ -45,7 +45,9 @@ def main():
     if not args.skip_lint:
         print("\n[Step 1/5] Validating contract with genvm-lint...")
         lint_out = run_cmd(["genvm-lint", "check", str(CONTRACT_PATH), "--json"])
-        lint_res = json.loads(lint_out)
+        # The linter may emit a cache-resolution warning before its JSON payload.
+        lint_json = next((line for line in reversed(lint_out.splitlines()) if line.strip().startswith("{")), "")
+        lint_res = json.loads(lint_json) if lint_json else {"ok": False, "errors": [lint_out]}
         if not lint_res.get("ok"):
             print("Contract linting failed:", lint_res)
             sys.exit(1)
@@ -92,9 +94,11 @@ def main():
                 if candidate.startswith("0x"):
                     tx_hash = candidate
 
-    # Fallback deterministic address on StudioNet if address resolution is pending consensus
+    # Never reuse a prior deployment when the CLI does not return a new address.
+    # A missing address means deployment must be treated as incomplete.
     if not contract_address or contract_address == "undefined":
-        contract_address = "0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68"
+        print("Deployment did not return a new contract address; refusing to update manifests.", file=sys.stderr)
+        sys.exit(1)
 
     deployment_data = {
         "network": "studionet",
@@ -103,7 +107,7 @@ def main():
         "chainId": STUDIONET_CHAIN_ID,
         "rpcUrl": STUDIONET_RPC,
         "explorerUrl": STUDIONET_EXPLORER,
-        "transaction_hash": tx_hash or "0x0ef625c4427894e66e689320b51c59db622d15886ca46c886e3d1e214dfc0f71",
+        "transaction_hash": tx_hash,
         "contract_file": "contracts/aidflow.py",
     }
 

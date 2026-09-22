@@ -1,10 +1,10 @@
 {
   "network": "studionet",
   "contract": "AidFlow",
-  "contract_address": "0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68",
+  "contract_address": "0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3",
   "chainId": 61999,
   "rpcUrl": "https://studio.genlayer.com/api",
-  "explorerUrl": "https://genlayer-explorer.vercel.app",
-  "transaction_hash": "0x0ef625c4427894e66e689320b51c59db622d15886ca46c886e3d1e214dfc0f71",
+  "explorerUrl": "https://studio.genlayer.com/",
+  "transaction_hash": null,
   "contract_file": "contracts/aidflow.py"
 }

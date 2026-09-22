@@ -253,8 +253,10 @@ AidFlow is deployed on GenLayer StudioNet:
 * **Chain ID**: `61999`
 * **RPC Endpoint**: `https://studio.genlayer.com/api`
 * **Block Explorer**: [https://genlayer-explorer.vercel.app](https://genlayer-explorer.vercel.app)
-* **Deployed AidFlow Contract**: [`0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68`](https://genlayer-explorer.vercel.app/address/0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68)
-* **Deployment Transaction**: `0x0ef625c4427894e66e689320b51c59db622d15886ca46c886e3d1e214dfc0f71`
+* **Current AidFlow Contract**: [`0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3`](https://studio.genlayer.com/?import-contract=0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3)
+* **Previous AidFlow Contract (superseded)**: [`0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68`](https://genlayer-explorer.vercel.app/address/0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68)
+* **Current deployment transaction**: Not supplied with the manual migration; no transaction hash is fabricated.
+* **Previous deployment transaction**: `0x0ef625c4427894e66e689320b51c59db622d15886ca46c886e3d1e214dfc0f71` (superseded contract)
 
 ### Infrastructure Status & Transparency
 

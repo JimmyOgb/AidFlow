@@ -147,6 +147,42 @@ export async function sendContractTransaction({
   return txHash;
 }
 
+export async function waitForTransactionReceipt(
+  txHash: string,
+  timeoutMs: number = 60000,
+  pollIntervalMs: number = 2000
+): Promise<{ status: "0x1" | "0x0"; transactionHash: string }> {
+  const rpcUrl = deployedConfig.rpcUrl || "https://studio.genlayer.com/api";
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(rpcUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: Date.now(),
+          method: "eth_getTransactionReceipt",
+          params: [txHash],
+        }),
+      });
+      const data = await res.json();
+      if (data.result) {
+        if (data.result.status === "0x1" || data.result.status === 1) {
+          return { status: "0x1", transactionHash: txHash };
+        } else if (data.result.status === "0x0" || data.result.status === 0) {
+          throw new Error(`Transaction ${txHash} reverted on-chain`);
+        }
+      }
+    } catch (e: any) {
+      if (e.message && e.message.includes("reverted")) throw e;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  throw new Error(`Transaction confirmation timed out after ${timeoutMs / 1000}s`);
+}
+
 // Low-level GenLayer StudioNet RPC caller targeting https://studio.genlayer.com/api
 export async function genlayerCall(method: string, args: any[] = []): Promise<any> {
   const rpcUrl = deployedConfig.rpcUrl || "https://studio.genlayer.com/api";

@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Coins, X, CheckCircle2, AlertCircle } from "lucide-react";
-import { formatGEN, parseGEN, TxLifecycleState, sendContractTransaction, getContractAddress } from "../lib/genlayer";
+import { formatGEN, parseGEN, TxLifecycleState, sendContractTransaction, waitForTransactionReceipt, getContractAddress } from "../lib/genlayer";
 import TransactionConfirmPanel from "./TransactionConfirmPanel";
 
 interface FundModalProps {
@@ -53,13 +53,14 @@ export default function FundModal({
       setTxHash(submittedHash);
       setTxState("PROCESSING");
 
+      // Wait for real on-chain transaction receipt
+      await waitForTransactionReceipt(submittedHash);
+
+      setTxState("CONFIRMED");
+      onSuccess();
       setTimeout(() => {
-        setTxState("CONFIRMED");
-        setTimeout(() => {
-          onSuccess();
-          onClose();
-        }, 2000);
-      }, 3000);
+        onClose();
+      }, 1500);
     } catch (err: any) {
       console.error("Fund transaction failed:", err);
       setErrorMessage(err.message || "Failed to submit funding transaction to StudioNet");

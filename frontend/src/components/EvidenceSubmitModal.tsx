@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Upload, X, CheckCircle2, AlertCircle, FileText, Image as ImageIcon, MapPin, Users, Globe, Hash } from "lucide-react";
-import { getContractAddress, TxLifecycleState, sendContractTransaction } from "../lib/genlayer";
+import { getContractAddress, TxLifecycleState, sendContractTransaction, waitForTransactionReceipt } from "../lib/genlayer";
 import { EvidenceType } from "../lib/types";
 
 interface EvidenceSubmitModalProps {
@@ -85,13 +85,14 @@ export default function EvidenceSubmitModal({
       setTxHash(submittedHash);
       setTxState("PROCESSING");
 
+      // Wait for real on-chain transaction receipt
+      await waitForTransactionReceipt(submittedHash);
+
+      setTxState("CONFIRMED");
+      onSuccess();
       setTimeout(() => {
-        setTxState("CONFIRMED");
-        setTimeout(() => {
-          onSuccess();
-          onClose();
-        }, 2000);
-      }, 3000);
+        onClose();
+      }, 1500);
     } catch (err: any) {
       console.error("Submit evidence transaction failed:", err);
       setErrorMessage(err.message || "Failed to submit evidence transaction to StudioNet");

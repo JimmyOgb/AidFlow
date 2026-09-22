@@ -1,14 +1,17 @@
 "use client";
 
 import React from "react";
-import { ShieldCheck, ArrowUpRight, Lock, AlertCircle } from "lucide-react";
+import { ShieldCheck, ArrowUpRight, Lock } from "lucide-react";
 import { getContractAddress } from "../lib/genlayer";
 
 interface TransactionConfirmPanelProps {
   action: string;
+  methodName?: string;
   amountGEN?: string;
+  callerAddress?: string;
   recipientLabel: string;
   recipientAddress?: string;
+  contractAddress?: string;
   explanation: string;
   isSubmitting: boolean;
   onConfirm: () => void;
@@ -17,16 +20,19 @@ interface TransactionConfirmPanelProps {
 
 export default function TransactionConfirmPanel({
   action,
+  methodName,
   amountGEN,
+  callerAddress,
   recipientLabel,
   recipientAddress,
+  contractAddress,
   explanation,
   isSubmitting,
   onConfirm,
   onCancel,
 }: TransactionConfirmPanelProps) {
-  const contractAddress = getContractAddress();
-  const targetAddress = recipientAddress || contractAddress;
+  const activeContract = contractAddress || getContractAddress();
+  const targetAddress = recipientAddress || activeContract;
 
   return (
     <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-4 text-left">
@@ -45,9 +51,14 @@ export default function TransactionConfirmPanel({
       <div className="grid grid-cols-2 gap-3 text-xs">
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">
-            Action
+            Action / Method
           </span>
           <span className="font-bold text-white mt-0.5 block">{action}</span>
+          {methodName && (
+            <span className="font-mono text-[10px] text-cyan-400 block mt-0.5">
+              {methodName}()
+            </span>
+          )}
         </div>
 
         <div>
@@ -55,24 +66,45 @@ export default function TransactionConfirmPanel({
             Network
           </span>
           <span className="font-medium text-slate-300 mt-0.5 block">GenLayer StudioNet</span>
+          <span className="font-mono text-[10px] text-slate-500 block mt-0.5">Chain ID: 61999</span>
         </div>
 
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">
-            Recipient of Transaction
+            AidFlow Contract Address
           </span>
-          <span className="font-medium text-slate-300 mt-0.5 block">{recipientLabel}</span>
-          <span className="font-mono text-[10px] text-slate-400 truncate block mt-0.5">
-            {targetAddress}
+          <span className="font-mono text-[10px] text-slate-300 truncate block mt-0.5" title={activeContract}>
+            {activeContract}
           </span>
         </div>
 
         <div>
           <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">
-            Amount
+            Native Value (GEN)
           </span>
           <span className="font-mono font-bold text-emerald-400 text-sm mt-0.5 block">
             {amountGEN ? `${amountGEN} GEN` : "0.00 GEN (State Call)"}
+          </span>
+        </div>
+
+        {callerAddress && (
+          <div>
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">
+              Caller / Signer
+            </span>
+            <span className="font-mono text-[10px] text-slate-300 truncate block mt-0.5" title={callerAddress}>
+              {callerAddress}
+            </span>
+          </div>
+        )}
+
+        <div>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 block">
+            Recipient / Destination
+          </span>
+          <span className="font-medium text-slate-300 mt-0.5 block">{recipientLabel}</span>
+          <span className="font-mono text-[10px] text-slate-400 truncate block mt-0.5" title={targetAddress}>
+            {targetAddress}
           </span>
         </div>
       </div>
@@ -80,7 +112,7 @@ export default function TransactionConfirmPanel({
       <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800/80 text-[11px] text-slate-400 leading-relaxed flex items-start gap-2">
         <Lock className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
         <div>
-          <strong className="text-slate-200 block mb-0.5">What will happen:</strong>
+          <strong className="text-slate-200 block mb-0.5">Execution Details:</strong>
           {explanation}
         </div>
       </div>

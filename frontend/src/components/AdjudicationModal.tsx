@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { Cpu, X, CheckCircle2, AlertTriangle, XCircle, Clock, ShieldCheck, Scale, ArrowRight, ExternalLink } from "lucide-react";
 import { Milestone, AdjudicationResult } from "../lib/types";
-import { formatGEN, TxLifecycleState, sendContractTransaction, getContractAddress } from "../lib/genlayer";
+import { formatGEN, TxLifecycleState, sendContractTransaction, waitForTransactionReceipt, getContractAddress } from "../lib/genlayer";
 
 interface AdjudicationModalProps {
   campaignId: number;
@@ -44,10 +44,11 @@ export default function AdjudicationModal({
       setAdjTxHash(submittedHash);
       setAdjState("ADJUDICATING");
 
-      setTimeout(() => {
-        setAdjState("FINALIZED");
-        onRefresh();
-      }, 4000);
+      // Wait for real on-chain consensus receipt (up to 90s for LLM validator execution)
+      await waitForTransactionReceipt(submittedHash, 90000);
+
+      setAdjState("FINALIZED");
+      onRefresh();
     } catch (err: any) {
       console.error("Adjudication failed:", err);
       setErrorMessage(err.message || "Failed to trigger adjudication on StudioNet");
@@ -69,13 +70,14 @@ export default function AdjudicationModal({
       setReleaseTxHash(submittedHash);
       setReleaseState("PROCESSING");
 
+      // Wait for real on-chain transaction receipt
+      await waitForTransactionReceipt(submittedHash);
+
+      setReleaseState("CONFIRMED");
+      onRefresh();
       setTimeout(() => {
-        setReleaseState("CONFIRMED");
-        setTimeout(() => {
-          onRefresh();
-          onClose();
-        }, 2000);
-      }, 3000);
+        onClose();
+      }, 1500);
     } catch (err: any) {
       console.error("Release milestone failed:", err);
       setErrorMessage(err.message || "Failed to release milestone on StudioNet");

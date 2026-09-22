@@ -1,3 +1,6 @@
+// GenLayer Intelligent Contract ABI for AidFlow
+// Verified against contracts/aidflow.py
+
 export const AIDFLOW_ABI = {
   contract: "AidFlow",
   methods: {
@@ -12,7 +15,7 @@ export const AIDFLOW_ABI = {
         { name: "milestone_policies", type: "string[]" }
       ],
       readonly: false,
-      ret: "int",
+      ret: "null",
       payable: false
     },
     fund_campaign: {
@@ -29,7 +32,7 @@ export const AIDFLOW_ABI = {
         { name: "uri", type: "string" },
         { name: "metadata_hash", type: "string" },
         { name: "description", type: "string" },
-        { name: "timestamp", type: "string" }
+        { name: "submitted_at", type: "string" }
       ],
       readonly: false,
       ret: "null",
@@ -107,6 +110,19 @@ export const AIDFLOW_ABI = {
       params: [{ name: "account", type: "address" }],
       readonly: true,
       ret: "dict"
+    },
+    is_campaign_refundable: {
+      params: [{ name: "campaign_id", type: "int" }],
+      readonly: true,
+      ret: "bool"
+    },
+    get_contributor_amount: {
+      params: [
+        { name: "campaign_id", type: "int" },
+        { name: "contributor", type: "address" }
+      ],
+      readonly: true,
+      ret: "int"
     }
   }
 } as const;
@@ -124,14 +140,14 @@ export const AIDFLOW_VIEM_ABI = [
       { name: "milestone_deadlines", type: "string[]" },
       { name: "milestone_policies", type: "string[]" },
     ],
-    outputs: [{ name: "", type: "uint256" }],
+    outputs: [],
     stateMutability: "nonpayable",
   },
   {
     type: "function",
     name: "fund_campaign",
     inputs: [{ name: "campaign_id", type: "uint256" }],
-    outputs: [{ name: "", type: "uint256" }],
+    outputs: [],
     stateMutability: "payable",
   },
   {
@@ -144,7 +160,7 @@ export const AIDFLOW_VIEM_ABI = [
       { name: "uri", type: "string" },
       { name: "metadata_hash", type: "string" },
       { name: "description", type: "string" },
-      { name: "timestamp", type: "string" },
+      { name: "submitted_at", type: "string" },
     ],
     outputs: [],
     stateMutability: "nonpayable",
@@ -190,5 +206,123 @@ export const AIDFLOW_VIEM_ABI = [
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "nonpayable",
   },
+  {
+    type: "function",
+    name: "get_campaign_count",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "get_campaign",
+    inputs: [{ name: "campaign_id", type: "uint256" }],
+    outputs: [
+      {
+        components: [
+          { name: "id", type: "uint256" },
+          { name: "donor", type: "address" },
+          { name: "organization", type: "address" },
+          { name: "title", type: "string" },
+          { name: "description", type: "string" },
+          { name: "total_funding", type: "uint256" },
+          { name: "funded_amount", type: "uint256" },
+          { name: "released_amount", type: "uint256" },
+          { name: "refunded_amount", type: "uint256" },
+          { name: "status", type: "string" },
+          { name: "milestone_count", type: "uint256" },
+        ],
+        name: "",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "get_milestone",
+    inputs: [
+      { name: "campaign_id", type: "uint256" },
+      { name: "milestone_id", type: "uint256" },
+    ],
+    outputs: [
+      {
+        components: [
+          { name: "id", type: "uint256" },
+          { name: "amount", type: "uint256" },
+          { name: "target", type: "string" },
+          { name: "deadline", type: "string" },
+          { name: "verification_policy", type: "string" },
+          { name: "status", type: "string" },
+          { name: "evidence_count", type: "uint256" },
+        ],
+        name: "",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "get_campaign_milestones",
+    inputs: [{ name: "campaign_id", type: "uint256" }],
+    outputs: [{ name: "", type: "tuple[]" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "get_milestone_evidence",
+    inputs: [
+      { name: "campaign_id", type: "uint256" },
+      { name: "milestone_id", type: "uint256" },
+      { name: "evidence_idx", type: "uint256" },
+    ],
+    outputs: [
+      {
+        components: [
+          { name: "evidence_type", type: "string" },
+          { name: "uri", type: "string" },
+          { name: "metadata_hash", type: "string" },
+          { name: "description", type: "string" },
+          { name: "submitted_at", type: "string" },
+        ],
+        name: "",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "get_claimable_balances",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [
+      {
+        components: [
+          { name: "org_claimable", type: "uint256" },
+          { name: "donor_claimable", type: "uint256" },
+        ],
+        name: "",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "is_campaign_refundable",
+    inputs: [{ name: "campaign_id", type: "uint256" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "get_contributor_amount",
+    inputs: [
+      { name: "campaign_id", type: "uint256" },
+      { name: "contributor", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
 ] as const;
-

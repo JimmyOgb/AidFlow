@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Users,
   AlertCircle,
+  HelpCircle,
 } from "lucide-react";
 import {
   genlayerCall,
@@ -26,6 +27,8 @@ import {
   getContractAddress,
   TxLifecycleState,
   sendContractTransaction,
+  waitForTransactionReceipt,
+  requestWalletConnection,
 } from "../../../lib/genlayer";
 import { Campaign, Milestone, EvidenceRef } from "../../../lib/types";
 import FundModal from "../../../components/FundModal";
@@ -43,9 +46,17 @@ export default function CampaignDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Claimable ledgers
-  const [claimablePayout, setClaimablePayout] = useState<bigint>(BigInt(0));
-  const [claimableRefund, setClaimableRefund] = useState<bigint>(BigInt(0));
+  // Connected wallet
+  const [connectedAddress, setConnectedAddress] = useState<string | null>(null);
+
+  // On-chain claimable ledgers (queried directly from contract, never derived)
+  const [registeredOrgClaimable, setRegisteredOrgClaimable] = useState<bigint>(BigInt(0));
+  const [userOrgClaimable, setUserOrgClaimable] = useState<bigint>(BigInt(0));
+  const [userDonorClaimable, setUserDonorClaimable] = useState<bigint>(BigInt(0));
+  const [userContribution, setUserContribution] = useState<bigint>(BigInt(0));
+  const [isRefundEligible, setIsRefundEligible] = useState<boolean>(false);
+
+  // Transaction states
   const [actionTxState, setActionTxState] = useState<TxLifecycleState>("IDLE");
   const [actionTxHash, setActionTxHash] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -56,9 +67,12 @@ export default function CampaignDetailPage() {
   const [selectedMilestoneForAdjudication, setSelectedMilestoneForAdjudication] = useState<Milestone | null>(null);
   const [confirmConfig, setConfirmConfig] = useState<{
     action: string;
+    methodName?: string;
     amountGEN?: string;
+    callerAddress?: string;
     recipientLabel: string;
-    recipientAddress: string;
+    recipientAddress?: string;
+    contractAddress?: string;
     explanation: string;
     onConfirm: () => Promise<void>;
   } | null>(null);
@@ -76,6 +90,7 @@ export default function CampaignDetailPage() {
         return;
       }
 
+      // 1. Read campaign state from contract
       const camp = await genlayerCall("get_campaign", [cid]);
       if (!camp) {
         setCampaign(null);
@@ -85,7 +100,7 @@ export default function CampaignDetailPage() {
         return;
       }
 
-      setCampaign({
+      const campaignObj: Campaign = {
         id: cid,
         donor: camp.donor,
         organization: camp.organization,
@@ -98,13 +113,15 @@ export default function CampaignDetailPage() {
         status: camp.status || "CREATED",
         created_at: camp.created_at || "",
         milestone_count: camp.milestone_count || 0,
-      });
+      };
+      setCampaign(campaignObj);
 
+      // 2. Read milestones
       const msList = await genlayerCall("get_campaign_milestones", [cid]);
       const validMilestones: Milestone[] = msList || [];
       setMilestones(validMilestones);
 
-      // Query real evidence items
+      // 3. Read evidence records
       const eMap: Record<number, EvidenceRef[]> = {};
       for (const m of validMilestones) {
         const eItems: EvidenceRef[] = [];
@@ -118,16 +135,35 @@ export default function CampaignDetailPage() {
       }
       setEvidenceMap(eMap);
 
-      // Query claimable ledger for organization and donor if wallet available
+      // 4. Real on-chain read of registered organization's org_claimable
+      if (camp.organization) {
+        const orgBalances = await genlayerCall("get_claimable_balances", [camp.organization]);
+        if (orgBalances) {
+          setRegisteredOrgClaimable(BigInt(orgBalances.org_claimable || 0));
+        }
+      }
+
+      // 5. Real on-chain read of refund condition
+      const refundable = await genlayerCall("is_campaign_refundable", [cid]);
+      setIsRefundEligible(Boolean(refundable));
+
+      // 6. Real on-chain read of connected wallet balances & contributions
       if (typeof window !== "undefined" && "ethereum" in window) {
         const eth = (window as any).ethereum;
         const accounts = await eth.request({ method: "eth_accounts" });
         if (accounts && accounts.length > 0) {
           const userAddr = accounts[0];
+          setConnectedAddress(userAddr);
+
           const userBalances = await genlayerCall("get_claimable_balances", [userAddr]);
           if (userBalances) {
-            setClaimablePayout(BigInt(userBalances.organization_claimable || 0));
-            setClaimableRefund(BigInt(userBalances.donor_claimable || 0));
+            setUserOrgClaimable(BigInt(userBalances.org_claimable || 0));
+            setUserDonorClaimable(BigInt(userBalances.donor_claimable || 0));
+          }
+
+          const contrib = await genlayerCall("get_contributor_amount", [cid, userAddr]);
+          if (contrib !== null && contrib !== undefined) {
+            setUserContribution(BigInt(contrib));
           }
         }
       }
@@ -145,6 +181,7 @@ export default function CampaignDetailPage() {
     loadData();
   }, [cid]);
 
+  // Execute release milestone tranche
   const executeReleaseTranche = async (milestoneId: number) => {
     try {
       setActionTxState("AWAITING_WALLET");
@@ -157,13 +194,14 @@ export default function CampaignDetailPage() {
       });
 
       setActionTxHash(txHash);
-      setActionTxState("SUBMITTED");
+      setActionTxState("PROCESSING");
 
-      setTimeout(() => {
-        setActionTxState("CONFIRMED");
-        loadData();
-        setConfirmConfig(null);
-      }, 2500);
+      // Wait for real on-chain transaction receipt
+      await waitForTransactionReceipt(txHash);
+
+      setActionTxState("CONFIRMED");
+      await loadData();
+      setConfirmConfig(null);
     } catch (err: any) {
       setActionError(err.message || "Failed to release tranche");
       setActionTxState("FAILED");
@@ -173,14 +211,18 @@ export default function CampaignDetailPage() {
   const handleReleaseTranche = (milestone: Milestone) => {
     setConfirmConfig({
       action: "Release Milestone Tranche",
+      methodName: "release_milestone",
       amountGEN: (Number(milestone.amount) / 1e18).toFixed(2),
-      recipientLabel: "Organization Claimable Balance",
+      callerAddress: connectedAddress || "Connected Wallet",
+      recipientLabel: "Organization Claimable Ledger",
       recipientAddress: campaign?.organization || getContractAddress(),
-      explanation: `Releases the verified tranche of ${formatGEN(milestone.amount)} from escrow into the organization's claimable ledger. Tranche must have passed GenLayer validator consensus.`,
+      contractAddress: getContractAddress(),
+      explanation: `Releases tranche #${milestone.id + 1} (${formatGEN(milestone.amount)}) from escrow into the registered organization's claimable ledger. Tranche must be verified by validator consensus.`,
       onConfirm: () => executeReleaseTranche(milestone.id),
     });
   };
 
+  // Execute claim organization payout
   const executeClaimPayout = async () => {
     try {
       setActionTxState("AWAITING_WALLET");
@@ -193,13 +235,14 @@ export default function CampaignDetailPage() {
       });
 
       setActionTxHash(txHash);
-      setActionTxState("SUBMITTED");
+      setActionTxState("PROCESSING");
 
-      setTimeout(() => {
-        setActionTxState("CONFIRMED");
-        loadData();
-        setConfirmConfig(null);
-      }, 2500);
+      // Wait for real on-chain receipt
+      await waitForTransactionReceipt(txHash);
+
+      setActionTxState("CONFIRMED");
+      await loadData();
+      setConfirmConfig(null);
     } catch (err: any) {
       setActionError(err.message || "Failed to claim payout");
       setActionTxState("FAILED");
@@ -207,16 +250,66 @@ export default function CampaignDetailPage() {
   };
 
   const handleClaimPayout = () => {
+    const claimAmount = userOrgClaimable > BigInt(0) ? userOrgClaimable : registeredOrgClaimable;
     setConfirmConfig({
       action: "Claim Organization Payout",
-      amountGEN: (Number(claimablePayout) / 1e18).toFixed(2),
-      recipientLabel: "Registered Organization Address",
-      recipientAddress: campaign?.organization || "Your Connected Wallet",
-      explanation: `Calls claim_payout() on AidFlow contract. Zeroes your claimable balance on-chain and transfers ${formatGEN(claimablePayout)} native GEN directly to your registered organization wallet.`,
+      methodName: "claim_payout",
+      amountGEN: (Number(claimAmount) / 1e18).toFixed(2),
+      callerAddress: connectedAddress || "Connected Wallet",
+      recipientLabel: "Eligible Organization / Caller Wallet",
+      recipientAddress: connectedAddress || campaign?.organization || "Connected Wallet",
+      contractAddress: getContractAddress(),
+      explanation: `Calls claim_payout() on AidFlow contract. Zeroes your claimable balance on-chain and transfers ${formatGEN(claimAmount)} native GEN directly to your connected organization wallet.`,
       onConfirm: executeClaimPayout,
     });
   };
 
+  // Execute trigger campaign refund
+  const executeTriggerRefund = async () => {
+    try {
+      setActionTxState("AWAITING_WALLET");
+      setActionError(null);
+      setActionTxHash(null);
+
+      const txHash = await sendContractTransaction({
+        functionName: "refund_campaign",
+        args: [BigInt(cid)],
+      });
+
+      setActionTxHash(txHash);
+      setActionTxState("PROCESSING");
+
+      // Wait for real on-chain receipt
+      await waitForTransactionReceipt(txHash);
+
+      setActionTxState("CONFIRMED");
+      await loadData();
+      setConfirmConfig(null);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to trigger campaign refund");
+      setActionTxState("FAILED");
+    }
+  };
+
+  const handleTriggerRefund = () => {
+    const unreleased = campaign
+      ? BigInt(campaign.funded_amount || 0) - BigInt(campaign.released_amount || 0) - BigInt(campaign.refunded_amount || 0)
+      : BigInt(0);
+
+    setConfirmConfig({
+      action: "Trigger Campaign Refund",
+      methodName: "refund_campaign",
+      amountGEN: (Number(unreleased) / 1e18).toFixed(2),
+      callerAddress: connectedAddress || "Connected Wallet",
+      recipientLabel: "Proportional Contributor Refund Allocation",
+      recipientAddress: getContractAddress(),
+      contractAddress: getContractAddress(),
+      explanation: `Calls refund_campaign(${cid}) on AidFlow contract. Validates that a milestone failed, permanently transitions campaign into REFUNDED (terminal state), and allocates ${formatGEN(unreleased)} unreleased capital proportionally across all recorded contributors' personal refund claimable balances.`,
+      onConfirm: executeTriggerRefund,
+    });
+  };
+
+  // Execute claim donor/contributor refund
   const executeClaimRefund = async () => {
     try {
       setActionTxState("AWAITING_WALLET");
@@ -229,13 +322,14 @@ export default function CampaignDetailPage() {
       });
 
       setActionTxHash(txHash);
-      setActionTxState("SUBMITTED");
+      setActionTxState("PROCESSING");
 
-      setTimeout(() => {
-        setActionTxState("CONFIRMED");
-        loadData();
-        setConfirmConfig(null);
-      }, 2500);
+      // Wait for real on-chain receipt
+      await waitForTransactionReceipt(txHash);
+
+      setActionTxState("CONFIRMED");
+      await loadData();
+      setConfirmConfig(null);
     } catch (err: any) {
       setActionError(err.message || "Failed to claim refund");
       setActionTxState("FAILED");
@@ -244,11 +338,14 @@ export default function CampaignDetailPage() {
 
   const handleClaimRefund = () => {
     setConfirmConfig({
-      action: "Claim Donor Refund",
-      amountGEN: (Number(claimableRefund) / 1e18).toFixed(2),
-      recipientLabel: "Donor Wallet Address",
-      recipientAddress: campaign?.donor || "Your Connected Wallet",
-      explanation: `Calls claim_refund() on AidFlow contract. Reclaims ${formatGEN(claimableRefund)} unreleased escrow capital back to your donor wallet.`,
+      action: "Claim Contributor Refund",
+      methodName: "claim_refund",
+      amountGEN: (Number(userDonorClaimable) / 1e18).toFixed(2),
+      callerAddress: connectedAddress || "Connected Wallet",
+      recipientLabel: "Connected Contributor Wallet (Strict Ownership)",
+      recipientAddress: connectedAddress || "Connected Wallet",
+      contractAddress: getContractAddress(),
+      explanation: `Calls claim_refund() on AidFlow contract. Zeroes your contributor claimable refund ledger on-chain and transfers ${formatGEN(userDonorClaimable)} native GEN directly to your connected wallet. Transfers cannot be redirected to any other address.`,
       onConfirm: executeClaimRefund,
     });
   };
@@ -299,7 +396,15 @@ export default function CampaignDetailPage() {
   const funded = BigInt(campaign.funded_amount || 0);
   const total = BigInt(campaign.total_funding || 1);
   const released = BigInt(campaign.released_amount || 0);
-  const lockedInEscrow = funded > released ? funded - released : BigInt(0);
+  const refunded = BigInt(campaign.refunded_amount || 0);
+  const lockedInEscrow = funded > (released + refunded) ? funded - released - refunded : BigInt(0);
+  const isTerminalRefunded = campaign.status === "REFUNDED";
+  // The contract permits refund_campaign only for the recorded donor or a wallet
+  // with a non-zero contribution. Keep the UI aligned with that on-chain rule.
+  const connectedWalletCanTriggerRefund = Boolean(
+    connectedAddress &&
+      ((campaign.donor || "").toLowerCase() === connectedAddress.toLowerCase() || userContribution > BigInt(0))
+  );
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto pb-12">
@@ -322,6 +427,19 @@ export default function CampaignDetailPage() {
         </button>
       </div>
 
+      {/* Terminal State Warning Banner */}
+      {isTerminalRefunded && (
+        <div className="p-4 rounded-xl border border-rose-500/40 bg-rose-950/20 text-xs flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <span className="font-bold text-rose-300 block">Campaign Status: REFUNDED (Terminal State)</span>
+            <p className="text-slate-300 leading-relaxed">
+              This campaign has been refunded on-chain following an adjudicated failed milestone. All unreleased capital has been proportionally attributed to contributors. No further evidence submission, milestone adjudication, or tranche releases are permitted.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Transaction Status Alert */}
       {actionTxState !== "IDLE" && (
         <div className="p-4 rounded-xl glass-card border border-cyan-500/30 bg-cyan-950/20 text-xs space-y-1">
@@ -333,6 +451,12 @@ export default function CampaignDetailPage() {
               </span>
             )}
           </div>
+          {actionTxState === "PROCESSING" && (
+            <p className="text-slate-400">Waiting for on-chain StudioNet receipt confirmation...</p>
+          )}
+          {actionTxState === "CONFIRMED" && (
+            <p className="text-emerald-400 font-semibold">Transaction confirmed on-chain! State refreshed.</p>
+          )}
           {actionError && <p className="text-rose-400">{actionError}</p>}
         </div>
       )}
@@ -347,7 +471,9 @@ export default function CampaignDetailPage() {
               </span>
               <span
                 className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider ${
-                  campaign.status === "COMPLETED"
+                  isTerminalRefunded
+                    ? "bg-rose-500/10 text-rose-400 border border-rose-500/30"
+                    : campaign.status === "COMPLETED"
                     ? "bg-purple-500/10 text-purple-400 border border-purple-500/30"
                     : campaign.status === "FUNDED"
                     ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
@@ -362,9 +488,9 @@ export default function CampaignDetailPage() {
             <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-2xl">{campaign.description}</p>
           </div>
 
-          {/* Action: Fund Campaign */}
+          {/* Action Buttons: Fund, Payout, Refund Trigger, Claim Refund */}
           <div className="flex flex-col sm:items-end gap-2 shrink-0">
-            {campaign.status !== "COMPLETED" && (
+            {!isTerminalRefunded && campaign.status !== "COMPLETED" && (
               <button
                 onClick={() => setShowFundModal(true)}
                 className="px-5 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 transition-all shadow-md shadow-emerald-500/10 flex items-center gap-2"
@@ -374,43 +500,99 @@ export default function CampaignDetailPage() {
               </button>
             )}
 
-            {claimablePayout > BigInt(0) && (
+            {/* Claim Payout: Enabled when connected wallet has claimable payout balance */}
+            {userOrgClaimable > BigInt(0) && (
               <button
                 onClick={handleClaimPayout}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition-all shadow-md shadow-purple-600/20 flex items-center gap-2"
               >
-                Claim Payout ({formatGEN(claimablePayout)})
+                Claim Payout ({formatGEN(userOrgClaimable)})
               </button>
             )}
 
-            {claimableRefund > BigInt(0) && (
+            {/* Trigger Refund: Enabled ONLY when contract reports is_campaign_refundable == true */}
+            {!isTerminalRefunded && isRefundEligible && connectedWalletCanTriggerRefund && (
               <button
-                onClick={handleClaimRefund}
+                onClick={handleTriggerRefund}
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition-all shadow-md shadow-amber-600/20 flex items-center gap-2"
               >
-                Claim Refund ({formatGEN(claimableRefund)})
+                <AlertTriangle className="w-4 h-4" />
+                Trigger Refund ({formatGEN(lockedInEscrow)})
+              </button>
+            )}
+
+            {/* Claim Refund: Available when connected contributor has non-zero donor_claimable */}
+            {userDonorClaimable > BigInt(0) && (
+              <button
+                onClick={handleClaimRefund}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition-all shadow-md shadow-rose-600/20 flex items-center gap-2"
+              >
+                Claim Refund ({formatGEN(userDonorClaimable)})
               </button>
             )}
           </div>
         </div>
 
-        {/* Stakeholder Addresses */}
+        {/* Stakeholder Addresses & Real On-Chain Claimable Balances */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800 text-xs">
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-3">
-            <Users className="w-4 h-4 text-slate-500 shrink-0" />
-            <div className="overflow-hidden">
-              <span className="text-[10px] uppercase font-semibold text-slate-500 block">Donor Account</span>
-              <span className="font-mono text-slate-300 truncate block text-[11px]">
-                {campaign.donor || "N/A"}
+          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-semibold text-slate-500">Campaign Creator / Donor</span>
+              <Users className="w-3.5 h-3.5 text-slate-500" />
+            </div>
+            <span className="font-mono text-slate-300 truncate block text-[11px]">
+              {campaign.donor || "N/A"}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-semibold text-slate-500">Beneficiary Organization</span>
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            </div>
+            <span className="font-mono text-emerald-400 truncate block text-[11px]">
+              {campaign.organization || "N/A"}
+            </span>
+            <div className="pt-1 flex items-center justify-between text-[11px] border-t border-slate-800/80">
+              <span className="text-slate-400">Claimable Payout:</span>
+              <span className="font-bold text-purple-400 font-mono">
+                {formatGEN(registeredOrgClaimable)}
               </span>
             </div>
           </div>
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-3">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-            <div className="overflow-hidden">
-              <span className="text-[10px] uppercase font-semibold text-slate-500 block">Beneficiary Organization</span>
-              <span className="font-mono text-emerald-400 truncate block text-[11px]">
-                {campaign.organization || "N/A"}
+        </div>
+
+        {/* Connected Contributor & Ownership Panel */}
+        <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 text-xs space-y-2">
+          <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-cyan-400" />
+              <span className="font-bold text-slate-200 text-xs">Connected Contributor Account</span>
+            </div>
+            <span className="font-mono text-[11px] text-slate-400">
+              {connectedAddress || "Wallet not connected"}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+            <div>
+              <span className="text-[10px] uppercase font-semibold text-slate-500 block">Your Escrow Contribution</span>
+              <span className="font-mono font-bold text-white text-sm block mt-0.5">
+                {formatGEN(userContribution)}
+              </span>
+            </div>
+
+            <div>
+              <span className="text-[10px] uppercase font-semibold text-slate-500 block">Your Claimable Refund</span>
+              <span className="font-mono font-bold text-rose-400 text-sm block mt-0.5">
+                {formatGEN(userDonorClaimable)}
+              </span>
+            </div>
+
+            <div>
+              <span className="text-[10px] uppercase font-semibold text-slate-500 block">Refund Ownership Protection</span>
+              <span className="text-[11px] text-slate-400 block mt-0.5">
+                Strict 1:1 attribution. Native GEN transfers exclusively to connected caller.
               </span>
             </div>
           </div>
@@ -431,8 +613,12 @@ export default function CampaignDetailPage() {
             <div className="text-lg font-black text-amber-400 mt-0.5">{formatGEN(lockedInEscrow)}</div>
           </div>
           <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
-            <div className="text-[10px] uppercase font-semibold text-slate-500">Disbursed Aid</div>
-            <div className="text-lg font-black text-purple-400 mt-0.5">{formatGEN(released)}</div>
+            <div className="text-[10px] uppercase font-semibold text-slate-500">
+              {isTerminalRefunded ? "Total Refunded" : "Disbursed Aid"}
+            </div>
+            <div className={`text-lg font-black mt-0.5 ${isTerminalRefunded ? "text-rose-400" : "text-purple-400"}`}>
+              {formatGEN(isTerminalRefunded ? refunded : released)}
+            </div>
           </div>
         </div>
       </div>
@@ -510,7 +696,7 @@ export default function CampaignDetailPage() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs font-semibold text-slate-400">
                       <span>Submitted Evidence ({eItems.length})</span>
-                      {m.status !== "RELEASED" && (
+                      {!isTerminalRefunded && m.status !== "RELEASED" && (
                         <button
                           onClick={() => setSelectedMilestoneForEvidence(m)}
                           className="text-xs font-bold text-purple-400 hover:text-purple-300 flex items-center gap-1"
@@ -564,7 +750,7 @@ export default function CampaignDetailPage() {
                       </button>
                     </div>
 
-                    {isPassed && !isReleased && (
+                    {!isTerminalRefunded && isPassed && !isReleased && (
                       <button
                         onClick={() => handleReleaseTranche(m)}
                         disabled={actionTxState === "PROCESSING" || actionTxState === "AWAITING_WALLET"}
@@ -624,9 +810,12 @@ export default function CampaignDetailPage() {
           <div className="glass-card rounded-2xl border border-slate-800 w-full max-w-md p-6">
             <TransactionConfirmPanel
               action={confirmConfig.action}
+              methodName={confirmConfig.methodName}
               amountGEN={confirmConfig.amountGEN}
+              callerAddress={confirmConfig.callerAddress}
               recipientLabel={confirmConfig.recipientLabel}
               recipientAddress={confirmConfig.recipientAddress}
+              contractAddress={confirmConfig.contractAddress}
               explanation={confirmConfig.explanation}
               onConfirm={confirmConfig.onConfirm}
               onCancel={() => setConfirmConfig(null)}
