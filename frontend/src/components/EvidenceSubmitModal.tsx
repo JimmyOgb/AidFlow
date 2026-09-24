@@ -2,7 +2,12 @@
 
 import React, { useState } from "react";
 import { Upload, X, CheckCircle2, AlertCircle, FileText, Image as ImageIcon, MapPin, Users, Globe, Hash } from "lucide-react";
-import { getContractAddress, TxLifecycleState, sendContractTransaction, waitForTransactionReceipt } from "../lib/genlayer";
+import {
+  getContractAddress,
+  TxLifecycleState,
+  GenLayerTxTracking,
+  submitGenLayerWrite,
+} from "../lib/genlayer";
 import { EvidenceType } from "../lib/types";
 
 interface EvidenceSubmitModalProps {
@@ -26,6 +31,8 @@ export default function EvidenceSubmitModal({
   const [description, setDescription] = useState("");
   const [txState, setTxState] = useState<TxLifecycleState>("IDLE");
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [txTracking, setTxTracking] = useState<GenLayerTxTracking | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const evidenceTypes: { type: EvidenceType; label: string; icon: any }[] = [
@@ -56,16 +63,15 @@ export default function EvidenceSubmitModal({
     e.preventDefault();
     setErrorMessage(null);
     setTxHash(null);
+    setStatusMessage(null);
 
     try {
       if (!uri.trim()) throw new Error("Evidence URI is required");
       if (!description.trim()) throw new Error("Description is required");
       if (!metadataHash.trim()) throw new Error("Document integrity hash is required");
 
-      setTxState("AWAITING_WALLET");
-
       const timestamp = new Date().toISOString();
-      const submittedHash = await sendContractTransaction({
+      const result = await submitGenLayerWrite({
         functionName: "submit_evidence",
         args: [
           BigInt(campaignId),
@@ -76,19 +82,32 @@ export default function EvidenceSubmitModal({
           description,
           timestamp,
         ],
+        onStatusChange: (st, msg) => {
+          setTxState(st);
+          if (msg) setStatusMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setTxTracking(tr);
+          setTxHash(tr.txId);
+        },
       });
 
-      if (!submittedHash || typeof submittedHash !== "string" || !submittedHash.startsWith("0x")) {
-        throw new Error("Transaction was rejected or returned an invalid hash");
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setTxState("UNDETERMINED");
+        setStatusMessage(
+          "Validator consensus produced NO_MAJORITY (UNDETERMINED). Evidence was not committed on-chain. Transaction ID preserved."
+        );
+        return;
       }
 
-      setTxHash(submittedHash);
-      setTxState("PROCESSING");
+      if (!result.isSuccess) {
+        setTxState("FAILED");
+        setErrorMessage(`Evidence submission failed on-chain: ${result.executionResultName}`);
+        return;
+      }
 
-      // Wait for real on-chain transaction receipt
-      await waitForTransactionReceipt(submittedHash);
-
-      setTxState("CONFIRMED");
+      setTxState("SUCCESS");
+      setStatusMessage("Evidence successfully committed on GenLayer StudioNet!");
       onSuccess();
       setTimeout(() => {
         onClose();
@@ -206,29 +225,37 @@ export default function EvidenceSubmitModal({
             />
           </div>
 
-          {/* Real Lifecycle Status */}
+          {/* Real GenLayer Lifecycle Status */}
           {txState !== "IDLE" && (
             <div
-              className={`p-3.5 rounded-xl border text-xs space-y-1 ${
-                txState === "CONFIRMED"
+              className={`p-3.5 rounded-xl border text-xs space-y-2 ${
+                txState === "SUCCESS"
                   ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
+                  : txState === "UNDETERMINED"
+                  ? "bg-amber-950/20 border-amber-500/40 text-amber-300"
                   : txState === "FAILED"
                   ? "bg-rose-950/20 border-rose-500/40 text-rose-300"
                   : "bg-purple-950/20 border-purple-500/40 text-purple-300"
               }`}
             >
               <div className="flex items-center justify-between font-bold">
-                <span>Transaction Status: {txState}</span>
-                {txHash && (
-                  <span className="font-mono text-[10px]">
-                    Tx: {txHash.slice(0, 8)}...{txHash.slice(-6)}
+                <span>Lifecycle State: {txState}</span>
+                {txTracking?.resultName && (
+                  <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700">
+                    Consensus: {txTracking.resultName}
                   </span>
                 )}
               </div>
-              {txState === "AWAITING_WALLET" && <p>Approve the evidence registration in your StudioNet wallet...</p>}
-              {txState === "PROCESSING" && <p>Broadcast to StudioNet. Registering evidence on-chain...</p>}
-              {txState === "CONFIRMED" && <p>Evidence registered on-chain! Milestone ready for adjudication.</p>}
-              {errorMessage && <p className="text-rose-400">{errorMessage}</p>}
+
+              {txHash && (
+                <div className="text-[10px] font-mono break-all text-slate-300">
+                  <span className="text-purple-400 font-bold block">GenLayer Transaction ID:</span>
+                  {txHash}
+                </div>
+              )}
+
+              {statusMessage && <p className="text-[11px] leading-relaxed">{statusMessage}</p>}
+              {errorMessage && <p className="text-rose-400 font-semibold">{errorMessage}</p>}
             </div>
           )}
 

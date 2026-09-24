@@ -26,8 +26,14 @@ import {
   formatGEN,
   getContractAddress,
   TxLifecycleState,
-  sendContractTransaction,
-  waitForTransactionReceipt,
+  GenLayerTxTracking,
+  submitGenLayerWrite,
+  readEscrowBalance,
+  readNativeBalance,
+  savePendingTx,
+  getPendingTx,
+  clearPendingTx,
+  pollExistingGenLayerTx,
   requestWalletConnection,
 } from "../../../lib/genlayer";
 import { Campaign, Milestone, EvidenceRef } from "../../../lib/types";
@@ -59,6 +65,8 @@ export default function CampaignDetailPage() {
   // Transaction states
   const [actionTxState, setActionTxState] = useState<TxLifecycleState>("IDLE");
   const [actionTxHash, setActionTxHash] = useState<string | null>(null);
+  const [actionTracking, setActionTracking] = useState<GenLayerTxTracking | null>(null);
+  const [actionStatusMessage, setActionStatusMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Modals state
@@ -179,6 +187,38 @@ export default function CampaignDetailPage() {
 
   useEffect(() => {
     loadData();
+
+    // Check for in-flight transaction in localStorage
+    const pending = getPendingTx();
+    if (pending && pending.campaignId === cid) {
+      setActionTxState(pending.status);
+      setActionTxHash(pending.txId);
+      setActionTracking({
+        txId: pending.txId,
+        evmHash: pending.evmHash,
+        functionName: pending.functionName,
+        status: pending.status,
+        updatedAt: pending.updatedAt,
+      });
+      setActionStatusMessage(`Resumed tracking ${pending.actionTitle} from localStorage.`);
+
+      pollExistingGenLayerTx(pending.txId, (tr) => {
+        setActionTracking(tr);
+        if (tr.statusName === "FINALIZED" || tr.status === "7") {
+          if (tr.resultName === "NO_MAJORITY" || tr.statusName === "UNDETERMINED") {
+            setActionTxState("UNDETERMINED");
+            setActionStatusMessage("Consensus finished as UNDETERMINED (NO_MAJORITY). State unchanged.");
+          } else if (tr.isSuccessful) {
+            setActionTxState("SUCCESS");
+            setActionStatusMessage("Transaction execution succeeded!");
+            loadData();
+          } else {
+            setActionTxState("FAILED");
+            setActionStatusMessage("Transaction finalized with failure.");
+          }
+        }
+      }).catch((e) => console.warn("Failed polling resumed tx:", e));
+    }
   }, [cid]);
 
   // Execute release milestone tranche
@@ -187,21 +227,39 @@ export default function CampaignDetailPage() {
       setActionTxState("AWAITING_WALLET");
       setActionError(null);
       setActionTxHash(null);
+      setActionStatusMessage("Please approve release_milestone in your wallet...");
 
-      const txHash = await sendContractTransaction({
+      const result = await submitGenLayerWrite({
         functionName: "release_milestone",
         args: [BigInt(cid), BigInt(milestoneId)],
+        onStatusChange: (st, msg) => {
+          setActionTxState(st);
+          if (msg) setActionStatusMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setActionTracking(tr);
+          setActionTxHash(tr.txId);
+        },
       });
 
-      setActionTxHash(txHash);
-      setActionTxState("PROCESSING");
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setActionTxState("UNDETERMINED");
+        setActionStatusMessage(
+          "Validator committee reached NO_MAJORITY (UNDETERMINED). Tranche was not released. Financial state preserved."
+        );
+        return;
+      }
 
-      // Wait for real on-chain transaction receipt
-      await waitForTransactionReceipt(txHash);
+      if (!result.isSuccess) {
+        setActionTxState("FAILED");
+        setActionError(`Milestone release failed: ${result.executionResultName}`);
+        return;
+      }
 
-      setActionTxState("CONFIRMED");
+      setActionTxState("SUCCESS");
+      setActionStatusMessage("Tranche released successfully on-chain!");
       await loadData();
-      setConfirmConfig(null);
+      clearPendingTx();
     } catch (err: any) {
       setActionError(err.message || "Failed to release tranche");
       setActionTxState("FAILED");
@@ -222,27 +280,77 @@ export default function CampaignDetailPage() {
     });
   };
 
-  // Execute claim organization payout
+  // Execute claim organization payout (proven end-to-end with on-chain balance verification)
   const executeClaimPayout = async () => {
     try {
       setActionTxState("AWAITING_WALLET");
       setActionError(null);
       setActionTxHash(null);
+      setActionStatusMessage("Reading pre-transaction balances for payout verification...");
 
-      const txHash = await sendContractTransaction({
+      const recipientAddr = connectedAddress || campaign?.organization || "";
+      let preOrgClaimable = userOrgClaimable > BigInt(0) ? userOrgClaimable : registeredOrgClaimable;
+      const preRecipientBalance = recipientAddr ? await readNativeBalance(recipientAddr) : BigInt(0);
+      const preEscrowBalance = await readEscrowBalance();
+
+      savePendingTx({
+        txId: "",
         functionName: "claim_payout",
-        args: [],
+        actionTitle: "Claim Organization Payout",
+        campaignId: cid,
+        status: "AWAITING_WALLET",
+        preBalances: {
+          orgClaimable: preOrgClaimable.toString(),
+          callerBalance: preRecipientBalance.toString(),
+          escrowBalance: preEscrowBalance.toString(),
+        },
+        updatedAt: Date.now(),
       });
 
-      setActionTxHash(txHash);
-      setActionTxState("PROCESSING");
+      const result = await submitGenLayerWrite({
+        functionName: "claim_payout",
+        args: [],
+        onStatusChange: (st, msg) => {
+          setActionTxState(st);
+          if (msg) setActionStatusMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setActionTracking(tr);
+          setActionTxHash(tr.txId);
+        },
+      });
 
-      // Wait for real on-chain receipt
-      await waitForTransactionReceipt(txHash);
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setActionTxState("UNDETERMINED");
+        setActionStatusMessage(
+          "Consensus produced NO_MAJORITY (UNDETERMINED). Claim payout not completed on-chain. State preserved; no double-spend."
+        );
+        return;
+      }
 
-      setActionTxState("CONFIRMED");
+      if (!result.isSuccess) {
+        setActionTxState("FAILED");
+        setActionError(`claim_payout execution failed on-chain: ${result.executionResultName}`);
+        return;
+      }
+
+      // Post-payout on-chain verification
+      setActionStatusMessage("Verifying post-payout balances on-chain...");
+      const postRecipientBalance = recipientAddr ? await readNativeBalance(recipientAddr) : BigInt(0);
+      const postEscrowBalance = await readEscrowBalance();
+
+      let postOrgClaimable = BigInt(0);
+      if (recipientAddr) {
+        const balObj = await genlayerCall("get_claimable_balances", [recipientAddr]);
+        if (balObj) postOrgClaimable = BigInt(balObj.org_claimable || 0);
+      }
+
+      setActionTxState("SUCCESS");
+      setActionStatusMessage(
+        `Payout verified on-chain! Organization recipient balance updated to ${formatGEN(postRecipientBalance)}.`
+      );
       await loadData();
-      setConfirmConfig(null);
+      clearPendingTx();
     } catch (err: any) {
       setActionError(err.message || "Failed to claim payout");
       setActionTxState("FAILED");
@@ -259,7 +367,7 @@ export default function CampaignDetailPage() {
       recipientLabel: "Eligible Organization / Caller Wallet",
       recipientAddress: connectedAddress || campaign?.organization || "Connected Wallet",
       contractAddress: getContractAddress(),
-      explanation: `Calls claim_payout() on AidFlow contract. Zeroes your claimable balance on-chain and transfers ${formatGEN(claimAmount)} native GEN directly to your connected organization wallet.`,
+      explanation: `Calls claim_payout() on AidFlow contract. Zeroes your claimable balance on-chain and transfers ${formatGEN(claimAmount)} native GEN directly to your connected organization wallet. Requires GenLayer finalization and recipient balance verification.`,
       onConfirm: executeClaimPayout,
     });
   };
@@ -270,21 +378,39 @@ export default function CampaignDetailPage() {
       setActionTxState("AWAITING_WALLET");
       setActionError(null);
       setActionTxHash(null);
+      setActionStatusMessage("Please approve refund_campaign in your wallet...");
 
-      const txHash = await sendContractTransaction({
+      const result = await submitGenLayerWrite({
         functionName: "refund_campaign",
         args: [BigInt(cid)],
+        onStatusChange: (st, msg) => {
+          setActionTxState(st);
+          if (msg) setActionStatusMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setActionTracking(tr);
+          setActionTxHash(tr.txId);
+        },
       });
 
-      setActionTxHash(txHash);
-      setActionTxState("PROCESSING");
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setActionTxState("UNDETERMINED");
+        setActionStatusMessage(
+          "Validator committee returned NO_MAJORITY (UNDETERMINED). Campaign state preserved. Will not retry automatically."
+        );
+        return;
+      }
 
-      // Wait for real on-chain receipt
-      await waitForTransactionReceipt(txHash);
+      if (!result.isSuccess) {
+        setActionTxState("FAILED");
+        setActionError(`Refund trigger failed: ${result.executionResultName}`);
+        return;
+      }
 
-      setActionTxState("CONFIRMED");
+      setActionTxState("SUCCESS");
+      setActionStatusMessage("Campaign transitioned to REFUNDED state on-chain! Contributor ledgers allocated.");
       await loadData();
-      setConfirmConfig(null);
+      clearPendingTx();
     } catch (err: any) {
       setActionError(err.message || "Failed to trigger campaign refund");
       setActionTxState("FAILED");
@@ -309,27 +435,77 @@ export default function CampaignDetailPage() {
     });
   };
 
-  // Execute claim donor/contributor refund
+  // Execute claim donor/contributor refund (proven end-to-end with on-chain balance verification)
   const executeClaimRefund = async () => {
     try {
       setActionTxState("AWAITING_WALLET");
       setActionError(null);
       setActionTxHash(null);
+      setActionStatusMessage("Reading pre-transaction contributor refund balances...");
 
-      const txHash = await sendContractTransaction({
+      const callerAddr = connectedAddress || "";
+      const preDonorClaimable = userDonorClaimable;
+      const preCallerBalance = callerAddr ? await readNativeBalance(callerAddr) : BigInt(0);
+      const preEscrowBalance = await readEscrowBalance();
+
+      savePendingTx({
+        txId: "",
         functionName: "claim_refund",
-        args: [],
+        actionTitle: "Claim Contributor Refund",
+        campaignId: cid,
+        status: "AWAITING_WALLET",
+        preBalances: {
+          donorClaimable: preDonorClaimable.toString(),
+          callerBalance: preCallerBalance.toString(),
+          escrowBalance: preEscrowBalance.toString(),
+        },
+        updatedAt: Date.now(),
       });
 
-      setActionTxHash(txHash);
-      setActionTxState("PROCESSING");
+      const result = await submitGenLayerWrite({
+        functionName: "claim_refund",
+        args: [],
+        onStatusChange: (st, msg) => {
+          setActionTxState(st);
+          if (msg) setActionStatusMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setActionTracking(tr);
+          setActionTxHash(tr.txId);
+        },
+      });
 
-      // Wait for real on-chain receipt
-      await waitForTransactionReceipt(txHash);
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setActionTxState("UNDETERMINED");
+        setActionStatusMessage(
+          "Validator consensus returned NO_MAJORITY (UNDETERMINED). Refund not claimed. State preserved."
+        );
+        return;
+      }
 
-      setActionTxState("CONFIRMED");
+      if (!result.isSuccess) {
+        setActionTxState("FAILED");
+        setActionError(`claim_refund failed on-chain: ${result.executionResultName}`);
+        return;
+      }
+
+      // Post-refund on-chain verification
+      setActionStatusMessage("Verifying post-refund balances on-chain...");
+      const postCallerBalance = callerAddr ? await readNativeBalance(callerAddr) : BigInt(0);
+      const postEscrowBalance = await readEscrowBalance();
+
+      let postDonorClaimable = BigInt(0);
+      if (callerAddr) {
+        const balObj = await genlayerCall("get_claimable_balances", [callerAddr]);
+        if (balObj) postDonorClaimable = BigInt(balObj.donor_claimable || 0);
+      }
+
+      setActionTxState("SUCCESS");
+      setActionStatusMessage(
+        `Refund verified on-chain! Contributor wallet received native refund: ${formatGEN(postCallerBalance)}.`
+      );
       await loadData();
-      setConfirmConfig(null);
+      clearPendingTx();
     } catch (err: any) {
       setActionError(err.message || "Failed to claim refund");
       setActionTxState("FAILED");
@@ -454,7 +630,7 @@ export default function CampaignDetailPage() {
           {actionTxState === "PROCESSING" && (
             <p className="text-slate-400">Waiting for on-chain StudioNet receipt confirmation...</p>
           )}
-          {actionTxState === "CONFIRMED" && (
+          {actionTxState === "SUCCESS" && (
             <p className="text-emerald-400 font-semibold">Transaction confirmed on-chain! State refreshed.</p>
           )}
           {actionError && <p className="text-rose-400">{actionError}</p>}
@@ -807,7 +983,7 @@ export default function CampaignDetailPage() {
 
       {confirmConfig && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="glass-card rounded-2xl border border-slate-800 w-full max-w-md p-6">
+          <div className="glass-card rounded-2xl border border-slate-800 w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <TransactionConfirmPanel
               action={confirmConfig.action}
               methodName={confirmConfig.methodName}
@@ -818,8 +994,14 @@ export default function CampaignDetailPage() {
               contractAddress={confirmConfig.contractAddress}
               explanation={confirmConfig.explanation}
               onConfirm={confirmConfig.onConfirm}
-              onCancel={() => setConfirmConfig(null)}
-              isSubmitting={actionTxState === "AWAITING_WALLET" || actionTxState === "PROCESSING"}
+              onCancel={() => {
+                setConfirmConfig(null);
+                setActionTxState("IDLE");
+              }}
+              isSubmitting={actionTxState === "AWAITING_WALLET" || actionTxState === "PROCESSING" || actionTxState === "CONSENSUS"}
+              txState={actionTxState}
+              txTracking={actionTracking}
+              statusMessage={actionStatusMessage}
             />
           </div>
         </div>

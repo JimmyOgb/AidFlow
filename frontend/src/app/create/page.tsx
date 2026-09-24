@@ -3,7 +3,13 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, ShieldCheck, AlertCircle, CheckCircle2, Coins, ArrowRight } from "lucide-react";
-import { getContractAddress, parseGEN, TxLifecycleState, sendContractTransaction, waitForTransactionReceipt } from "../../lib/genlayer";
+import {
+  getContractAddress,
+  parseGEN,
+  TxLifecycleState,
+  GenLayerTxTracking,
+  submitGenLayerWrite,
+} from "../../lib/genlayer";
 import TransactionConfirmPanel from "../../components/TransactionConfirmPanel";
 
 interface MilestoneDraft {
@@ -29,6 +35,8 @@ export default function CreateCampaignPage() {
 
   const [txState, setTxState] = useState<TxLifecycleState>("IDLE");
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [txTracking, setTxTracking] = useState<GenLayerTxTracking | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
 
@@ -89,31 +97,48 @@ export default function CreateCampaignPage() {
   const handleCreateCampaign = async () => {
     setErrorMessage(null);
     setTxHash(null);
+    setStatusMessage(null);
 
     try {
       validateForm();
-      setTxState("AWAITING_WALLET");
 
       const amounts = milestones.map((m) => parseGEN(m.amountGEN));
       const targets = milestones.map((m) => m.target);
       const deadlines = milestones.map((m) => m.deadline);
       const policies = milestones.map((m) => m.policy);
 
-      const submittedHash = await sendContractTransaction({
+      const result = await submitGenLayerWrite({
         functionName: "create_campaign",
         args: [organization, title, description, amounts, targets, deadlines, policies],
+        onStatusChange: (st, msg) => {
+          setTxState(st);
+          if (msg) setStatusMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setTxTracking(tr);
+          setTxHash(tr.txId);
+        },
       });
 
-      setTxHash(submittedHash);
-      setTxState("PROCESSING");
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setTxState("UNDETERMINED");
+        setStatusMessage(
+          "Validator consensus produced NO_MAJORITY (UNDETERMINED). The campaign was not registered on-chain. State preserved; transaction ID retained."
+        );
+        return;
+      }
 
-      // Wait for real on-chain transaction receipt
-      await waitForTransactionReceipt(submittedHash);
+      if (!result.isSuccess) {
+        setTxState("FAILED");
+        setErrorMessage(`Campaign creation failed on-chain: ${result.executionResultName}`);
+        return;
+      }
 
-      setTxState("CONFIRMED");
+      setTxState("SUCCESS");
+      setStatusMessage("Campaign created and confirmed on GenLayer StudioNet!");
       setTimeout(() => {
         router.push("/explorer");
-      }, 1500);
+      }, 2000);
     } catch (err: any) {
       console.error("Create campaign transaction failed:", err);
       setErrorMessage(err.message || "Failed to create campaign on StudioNet");
@@ -288,7 +313,7 @@ export default function CreateCampaignPage() {
         {txState !== "IDLE" && (
           <div
             className={`p-4 rounded-xl border text-xs space-y-1 ${
-              txState === "CONFIRMED"
+              txState === "SUCCESS"
                 ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
                 : txState === "FAILED"
                 ? "bg-rose-950/20 border-rose-500/40 text-rose-300"
@@ -305,7 +330,7 @@ export default function CreateCampaignPage() {
             </div>
             {txState === "AWAITING_WALLET" && <p>Please approve the campaign creation in your StudioNet wallet.</p>}
             {txState === "PROCESSING" && <p>Transaction broadcast to StudioNet. Awaiting block receipt...</p>}
-            {txState === "CONFIRMED" && <p>Campaign successfully created on-chain! Redirecting to explorer...</p>}
+            {txState === "SUCCESS" && <p>Campaign successfully created on-chain! Redirecting to explorer...</p>}
             {errorMessage && <p className="text-rose-400 font-medium">{errorMessage}</p>}
           </div>
         )}
@@ -313,13 +338,21 @@ export default function CreateCampaignPage() {
         {showConfirm ? (
           <TransactionConfirmPanel
             action="Create Aid Campaign"
+            methodName="create_campaign"
             amountGEN="0.00"
             recipientLabel="AidFlow Contract (Campaign Registry)"
             recipientAddress={getContractAddress()}
+            contractAddress={getContractAddress()}
             explanation={`Registers a new campaign titled "${title}" targeting organization ${organization.slice(0, 10)}... with ${milestones.length} milestone tranche(s) totaling ${milestones.reduce((acc, m) => acc + (parseFloat(m.amountGEN) || 0), 0)} GEN.`}
-            isSubmitting={txState === "AWAITING_WALLET" || txState === "PROCESSING"}
+            isSubmitting={txState === "AWAITING_WALLET" || txState === "PROCESSING" || txState === "CONSENSUS"}
+            txState={txState}
+            txTracking={txTracking}
+            statusMessage={statusMessage}
             onConfirm={handleCreateCampaign}
-            onCancel={() => setShowConfirm(false)}
+            onCancel={() => {
+              setShowConfirm(false);
+              setTxState("IDLE");
+            }}
           />
         ) : (
           <button

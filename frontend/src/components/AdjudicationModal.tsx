@@ -3,7 +3,13 @@
 import React, { useState } from "react";
 import { Cpu, X, CheckCircle2, AlertTriangle, XCircle, Clock, ShieldCheck, Scale, ArrowRight, ExternalLink } from "lucide-react";
 import { Milestone, AdjudicationResult } from "../lib/types";
-import { formatGEN, TxLifecycleState, sendContractTransaction, waitForTransactionReceipt, getContractAddress } from "../lib/genlayer";
+import {
+  formatGEN,
+  TxLifecycleState,
+  GenLayerTxTracking,
+  submitGenLayerWrite,
+  getContractAddress,
+} from "../lib/genlayer";
 
 interface AdjudicationModalProps {
   campaignId: number;
@@ -20,8 +26,14 @@ export default function AdjudicationModal({
 }: AdjudicationModalProps) {
   const [adjState, setAdjState] = useState<TxLifecycleState>("IDLE");
   const [adjTxHash, setAdjTxHash] = useState<string | null>(null);
+  const [adjTracking, setAdjTracking] = useState<GenLayerTxTracking | null>(null);
+  const [adjMessage, setAdjMessage] = useState<string | null>(null);
+
   const [releaseState, setReleaseState] = useState<TxLifecycleState>("IDLE");
   const [releaseTxHash, setReleaseTxHash] = useState<string | null>(null);
+  const [releaseTracking, setReleaseTracking] = useState<GenLayerTxTracking | null>(null);
+  const [releaseMessage, setReleaseMessage] = useState<string | null>(null);
+
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const adj = milestone.adjudication;
@@ -34,20 +46,37 @@ export default function AdjudicationModal({
     try {
       setErrorMessage(null);
       setAdjTxHash(null);
-      setAdjState("AWAITING_WALLET");
-      
-      const submittedHash = await sendContractTransaction({
+      setAdjMessage("Submitting adjudicate_milestone to GenLayer consensus...");
+
+      const result = await submitGenLayerWrite({
         functionName: "adjudicate_milestone",
         args: [BigInt(campaignId), BigInt(milestone.id)],
+        onStatusChange: (st, msg) => {
+          setAdjState(st);
+          if (msg) setAdjMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setAdjTracking(tr);
+          setAdjTxHash(tr.txId);
+        },
       });
 
-      setAdjTxHash(submittedHash);
-      setAdjState("ADJUDICATING");
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setAdjState("UNDETERMINED");
+        setAdjMessage(
+          "Validator consensus produced NO_MAJORITY (UNDETERMINED). Non-deterministic adjudication did not reach majority. State preserved; transaction ID retained."
+        );
+        return;
+      }
 
-      // Wait for real on-chain consensus receipt (up to 90s for LLM validator execution)
-      await waitForTransactionReceipt(submittedHash, 90000);
+      if (!result.isSuccess) {
+        setAdjState("FAILED");
+        setErrorMessage(`Adjudication execution failed on-chain: ${result.executionResultName}`);
+        return;
+      }
 
-      setAdjState("FINALIZED");
+      setAdjState("SUCCESS");
+      setAdjMessage("Adjudication finalized and consensus reached on GenLayer StudioNet!");
       onRefresh();
     } catch (err: any) {
       console.error("Adjudication failed:", err);
@@ -60,20 +89,37 @@ export default function AdjudicationModal({
     try {
       setErrorMessage(null);
       setReleaseTxHash(null);
-      setReleaseState("AWAITING_WALLET");
+      setReleaseMessage("Submitting release_milestone to GenLayer...");
 
-      const submittedHash = await sendContractTransaction({
+      const result = await submitGenLayerWrite({
         functionName: "release_milestone",
         args: [BigInt(campaignId), BigInt(milestone.id)],
+        onStatusChange: (st, msg) => {
+          setReleaseState(st);
+          if (msg) setReleaseMessage(msg);
+        },
+        onTrackingUpdate: (tr) => {
+          setReleaseTracking(tr);
+          setReleaseTxHash(tr.txId);
+        },
       });
 
-      setReleaseTxHash(submittedHash);
-      setReleaseState("PROCESSING");
+      if (result.statusName === "UNDETERMINED" || result.resultName === "NO_MAJORITY") {
+        setReleaseState("UNDETERMINED");
+        setReleaseMessage(
+          "Validator consensus produced NO_MAJORITY (UNDETERMINED). Tranche not released. Financial state preserved."
+        );
+        return;
+      }
 
-      // Wait for real on-chain transaction receipt
-      await waitForTransactionReceipt(submittedHash);
+      if (!result.isSuccess) {
+        setReleaseState("FAILED");
+        setErrorMessage(`Release tranche failed: ${result.executionResultName}`);
+        return;
+      }
 
-      setReleaseState("CONFIRMED");
+      setReleaseState("SUCCESS");
+      setReleaseMessage("Milestone tranche released to organization balance!");
       onRefresh();
       setTimeout(() => {
         onClose();
@@ -240,10 +286,12 @@ export default function AdjudicationModal({
         {adjState !== "IDLE" && (
           <div
             className={`p-3.5 rounded-xl border text-xs space-y-1 ${
-              adjState === "FINALIZED"
+              adjState === "SUCCESS"
                 ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
                 : adjState === "FAILED"
                 ? "bg-rose-950/20 border-rose-500/40 text-rose-300"
+                : adjState === "UNDETERMINED"
+                ? "bg-amber-950/20 border-amber-500/40 text-amber-300"
                 : "bg-cyan-950/20 border-cyan-500/40 text-cyan-300"
             }`}
           >
@@ -256,10 +304,16 @@ export default function AdjudicationModal({
               )}
             </div>
             {adjState === "AWAITING_WALLET" && <p>Confirm the transaction in your StudioNet wallet...</p>}
-            {adjState === "ADJUDICATING" && (
+            {(adjState === "PROCESSING" || adjState === "CONSENSUS") && (
               <p>GenLayer validator committee evaluating submitted evidence non-deterministically...</p>
             )}
             {adjState === "FINALIZED" && <p>Consensus reached and state finalized on StudioNet!</p>}
+            {adjState === "SUCCESS" && <p>Milestone adjudication completed successfully!</p>}
+            {adjState === "UNDETERMINED" && (
+              <p className="text-amber-400 font-semibold">
+                Consensus resulted in NO_MAJORITY/UNDETERMINED. Funds remain securely locked.
+              </p>
+            )}
             {errorMessage && <p className="text-rose-400">{errorMessage}</p>}
           </div>
         )}
@@ -268,11 +322,11 @@ export default function AdjudicationModal({
         {releaseState !== "IDLE" && (
           <div
             className={`p-3.5 rounded-xl border text-xs space-y-1 ${
-              releaseState === "CONFIRMED"
+              releaseState === "SUCCESS"
                 ? "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
                 : releaseState === "FAILED"
                 ? "bg-rose-950/20 border-rose-500/40 text-rose-300"
-                : "bg-emerald-950/20 border-emerald-500/40 text-emerald-300"
+                : "bg-cyan-950/20 border-cyan-500/40 text-cyan-300"
             }`}
           >
             <div className="flex items-center justify-between font-bold">
@@ -285,7 +339,7 @@ export default function AdjudicationModal({
             </div>
             {releaseState === "AWAITING_WALLET" && <p>Confirm tranche release in your wallet...</p>}
             {releaseState === "PROCESSING" && <p>Processing milestone payout on StudioNet...</p>}
-            {releaseState === "CONFIRMED" && <p>Milestone tranche released to organization balance!</p>}
+            {releaseState === "SUCCESS" && <p>Milestone tranche released to organization balance!</p>}
             {errorMessage && <p className="text-rose-400">{errorMessage}</p>}
           </div>
         )}
@@ -297,12 +351,13 @@ export default function AdjudicationModal({
             onClick={handleRunAdjudication}
             disabled={
               adjState === "AWAITING_WALLET" ||
-              adjState === "ADJUDICATING" ||
+              adjState === "PROCESSING" ||
+              adjState === "CONSENSUS" ||
               milestone.evidence_count === 0
             }
             className="px-4 py-2.5 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-600/20 disabled:opacity-50 active:scale-95"
           >
-            {adjState === "ADJUDICATING" || adjState === "AWAITING_WALLET" ? (
+            {adjState === "PROCESSING" || adjState === "CONSENSUS" || adjState === "AWAITING_WALLET" ? (
               <span className="animate-pulse">Evaluating on StudioNet...</span>
             ) : (
               "Trigger Validator Consensus"
