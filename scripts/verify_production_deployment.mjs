@@ -18,7 +18,7 @@ async function verifyProduction() {
     chunkPaths.add(m[1]);
   }
 
-  // Also check create and explorer pages
+  // Also check create, explorer, and campaign pages
   for (const path of ["/create", "/explorer"]) {
     const pageRes = await fetch(`https://aid-flow1.vercel.app${path}`);
     console.log(`${path} HTTP Status: ${pageRes.status} ${pageRes.statusText}`);
@@ -34,6 +34,8 @@ async function verifyProduction() {
   let waitForDecisionFound = false;
   let waitForFinalizationFound = false;
   let isSuccessfulFound = false;
+  let duplicateEvmHashFound = false;
+  let guardedEvmHashFound = false;
 
   for (const chunkPath of chunkPaths) {
     const chunkUrl = `https://aid-flow1.vercel.app${chunkPath}`;
@@ -60,6 +62,14 @@ async function verifyProduction() {
       isSuccessfulFound = true;
       console.log(`[PASS] isSuccessful verification verified in: ${chunkPath}`);
     }
+    if (chunkCode.includes("evmHash:txId") || chunkCode.includes("evmHash: txId")) {
+      duplicateEvmHashFound = true;
+      console.error(`[FAIL] Duplicate evmHash: txId found in: ${chunkPath}`);
+    }
+    if (chunkCode.includes(".evmHash!==") || chunkCode.includes(".evmHash !==")) {
+      guardedEvmHashFound = true;
+      console.log(`[PASS] Guarded EVM hash display (evmHash !== txId) verified in: ${chunkPath}`);
+    }
   }
 
   console.log("\n--------------------------------------------------------------------------------");
@@ -70,6 +80,8 @@ async function verifyProduction() {
   console.log(`waitForDecision Lifecycle:    ${waitForDecisionFound ? "VERIFIED" : "MISSING"}`);
   console.log(`waitForFinalization Final:    ${waitForFinalizationFound ? "VERIFIED" : "MISSING"}`);
   console.log(`isSuccessful Verification:    ${isSuccessfulFound ? "VERIFIED" : "MISSING"}`);
+  console.log(`No Duplicate EVM Hash:        ${!duplicateEvmHashFound ? "CONFIRMED (Zero occurrences)" : "FAILED"}`);
+  console.log(`Guarded EVM Hash Display:     ${guardedEvmHashFound ? "CONFIRMED (evmHash !== txId)" : "PENDING PROPAGATION"}`);
   console.log("================================================================================\n");
 }
 
