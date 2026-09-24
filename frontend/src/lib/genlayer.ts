@@ -257,9 +257,12 @@ export async function submitGenLayerWrite({
   onStatusChange?.("WALLET_SUBMITTED", "Wallet transaction submitted to StudioNet");
   onStatusChange?.("PROCESSING", "Intelligent Contract execution in progress on GenLayer...");
 
+  // On StudioNet, client.writeContract returns the GenLayer Intelligent Contract transaction ID directly.
+  // EVM submission hashes only exist when using an outer EVM bridge envelope (e.g. Testnet Bradbury/Asimov).
+  // We do NOT conflate or duplicate the GenLayer transaction ID as the EVM hash.
   const tracking: GenLayerTxTracking = {
     txId,
-    evmHash: txId, // On StudioNet the outer submission hash maps to the txId
+    evmHash: undefined,
     functionName,
     status: "PENDING",
     statusName: "PENDING",
@@ -269,7 +272,7 @@ export async function submitGenLayerWrite({
 
   savePendingTx({
     txId,
-    evmHash: txId,
+    evmHash: undefined,
     functionName,
     actionTitle: functionName,
     status: "PROCESSING",
@@ -336,7 +339,6 @@ export async function submitGenLayerWrite({
     );
     savePendingTx({
       txId,
-      evmHash: txId,
       functionName,
       actionTitle: functionName,
       status: "UNDETERMINED",
@@ -345,7 +347,6 @@ export async function submitGenLayerWrite({
     });
     return {
       txId,
-      evmHash: txId,
       receipt,
       isSuccess: false,
       statusName,
@@ -358,7 +359,6 @@ export async function submitGenLayerWrite({
     onStatusChange?.("FAILED", `Transaction finalized with execution failure: ${executionResultName} (${resultName})`);
     savePendingTx({
       txId,
-      evmHash: txId,
       functionName,
       actionTitle: functionName,
       status: "FAILED",
@@ -367,7 +367,6 @@ export async function submitGenLayerWrite({
     });
     return {
       txId,
-      evmHash: txId,
       receipt,
       isSuccess: false,
       statusName,
@@ -381,7 +380,6 @@ export async function submitGenLayerWrite({
 
   return {
     txId,
-    evmHash: txId,
     receipt,
     isSuccess: true,
     statusName,
@@ -407,7 +405,6 @@ export async function pollExistingGenLayerTx(
 
   const tracking: GenLayerTxTracking = {
     txId,
-    evmHash: txId,
     functionName: "tracked_transaction",
     status: String(tx.status),
     statusName,

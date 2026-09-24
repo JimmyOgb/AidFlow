@@ -283,7 +283,7 @@ export default function TransactionConfirmPanel({
 
           {/* Explicit Hash Differentiation */}
           <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 text-[11px] space-y-1.5">
-            {txTracking?.evmHash && (
+            {txTracking?.evmHash && txTracking.evmHash !== txTracking.txId && (
               <div className="flex items-center justify-between">
                 <span className="text-slate-400 font-semibold">EVM Submission Hash:</span>
                 <div className="flex items-center gap-1.5 font-mono text-slate-300">
