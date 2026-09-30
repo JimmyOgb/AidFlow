@@ -46,16 +46,19 @@ def direct_deploy(direct_vm):
                 path = path.resolve()
         contract = deploy_contract(path, direct_vm, *args, **kwargs)
 
-        orig_fund = contract.fund_campaign
-        def _fund_with_balance(campaign_id, *f_args, **f_kwargs):
-            val = direct_vm.value
-            if val > 0:
-                s_bytes = direct_vm._to_bytes(direct_vm.sender)
-                c_bytes = direct_vm._to_bytes(direct_vm._contract_address)
-                direct_vm._balances[s_bytes] = direct_vm._balances.get(s_bytes, 0) - val
-                direct_vm._balances[c_bytes] = direct_vm._balances.get(c_bytes, 0) + val
-            return orig_fund(campaign_id, *f_args, **f_kwargs)
-        contract.fund_campaign = _fund_with_balance
+        try:
+            orig_fund = contract.fund_campaign
+            def _fund_with_balance(campaign_id, *f_args, **f_kwargs):
+                val = direct_vm.value
+                if val > 0:
+                    s_bytes = direct_vm._to_bytes(direct_vm.sender)
+                    c_bytes = direct_vm._to_bytes(direct_vm._contract_address)
+                    direct_vm._balances[s_bytes] = direct_vm._balances.get(s_bytes, 0) - val
+                    direct_vm._balances[c_bytes] = direct_vm._balances.get(c_bytes, 0) + val
+                return orig_fund(campaign_id, *f_args, **f_kwargs)
+            contract.fund_campaign = _fund_with_balance
+        except AttributeError:
+            pass
         return contract
     return _deploy
 

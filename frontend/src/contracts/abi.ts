@@ -123,6 +123,30 @@ export const AIDFLOW_ABI = {
       ],
       readonly: true,
       ret: "int"
+    },
+    verify_proposal: {
+      params: [
+        { name: "payload_json", type: "string" },
+        { name: "payload_hash", type: "string" }
+      ],
+      readonly: false,
+      ret: "string",
+      payable: false
+    },
+    get_verified_payload_hash: {
+      params: [{ name: "payload_hash", type: "string" }],
+      readonly: true,
+      ret: "string"
+    },
+    is_payload_hash_verified: {
+      params: [{ name: "payload_hash", type: "string" }],
+      readonly: true,
+      ret: "bool"
+    },
+    get_latest_verified_hash: {
+      params: [],
+      readonly: true,
+      ret: "string"
     }
   }
 } as const;
@@ -323,6 +347,37 @@ export const AIDFLOW_VIEM_ABI = [
       { name: "contributor", type: "address" },
     ],
     outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "verify_proposal",
+    inputs: [
+      { name: "payload_json", type: "string" },
+      { name: "payload_hash", type: "string" },
+    ],
+    outputs: [{ name: "", type: "string" }],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "get_verified_payload_hash",
+    inputs: [{ name: "payload_hash", type: "string" }],
+    outputs: [{ name: "", type: "string" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "is_payload_hash_verified",
+    inputs: [{ name: "payload_hash", type: "string" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "get_latest_verified_hash",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
     stateMutability: "view",
   },
 ] as const;

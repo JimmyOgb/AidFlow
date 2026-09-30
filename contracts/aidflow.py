@@ -1,5 +1,6 @@
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -141,9 +142,12 @@ class AidFlow(gl.Contract):
     contributions: TreeMap[str, u256]
     contributor_counts: TreeMap[u256, u256]
     contributor_addrs: TreeMap[str, Address]
+    verified_payload_hashes: TreeMap[str, str]
+    latest_verified_hash: str
 
     def __init__(self):
         self.campaign_count = 0
+        self.latest_verified_hash = ""
 
     # -------------------------------------------------------------------------
     # Internal key helpers
@@ -717,3 +721,73 @@ Respond strictly in valid JSON format with this exact schema:
         gl.get_contract_at(sender).emit_transfer(value=amount)
 
         return amount
+
+    # -------------------------------------------------------------------------
+    # Consensus-Backed Payload Hash Binding & Proposal Verification
+    # -------------------------------------------------------------------------
+    @gl.public.write
+    def verify_proposal(self, payload_json: str, payload_hash: str) -> str:
+        # 1. Validate that payload_hash is a well-formed hex hash
+        if not payload_hash or not isinstance(payload_hash, str):
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Malformed payload hash: empty or invalid type")
+
+        clean_hash = payload_hash.strip().lower()
+        if clean_hash.startswith("0x"):
+            raw_hex = clean_hash[2:]
+        else:
+            raw_hex = clean_hash
+
+        if len(raw_hex) != 64 or not all(c in "0123456789abcdef" for c in raw_hex):
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Malformed payload hash: must be 64 valid hexadecimal characters (32 bytes)"
+            )
+
+        if not isinstance(payload_json, str):
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Malformed payload: payload_json must be a string")
+
+        # 2. Independently hash the actual submitted payload_json using supported deterministic SHA-256
+        computed_raw = hashlib.sha256(payload_json.encode("utf-8")).hexdigest().lower()
+        computed_hash = f"0x{computed_raw}"
+        submitted_hash = f"0x{raw_hex}"
+
+        # If direct string hash matches, adopt it; otherwise check canonical JSON serialization
+        if computed_hash != submitted_hash:
+            canonical_matched = False
+            try:
+                parsed = json.loads(payload_json)
+                canonical_str = json.dumps(parsed, sort_keys=True, separators=(",", ":"))
+                canonical_raw = hashlib.sha256(canonical_str.encode("utf-8")).hexdigest().lower()
+                if f"0x{canonical_raw}" == submitted_hash:
+                    computed_hash = f"0x{canonical_raw}"
+                    canonical_matched = True
+            except Exception:
+                pass
+
+            if not canonical_matched:
+                raise gl.vm.UserError(
+                    f"{ERROR_EXPECTED} Payload hash mismatch: computed {computed_hash} != submitted {submitted_hash}"
+                )
+
+        # 3. Store only the verified hash and record canonical state
+        self.verified_payload_hashes[computed_hash] = computed_hash
+        self.latest_verified_hash = computed_hash
+
+        return computed_hash
+
+    @gl.public.view
+    def get_verified_payload_hash(self, payload_hash: str) -> str:
+        clean = payload_hash.strip().lower()
+        norm = clean if clean.startswith("0x") else f"0x{clean}"
+        if norm not in self.verified_payload_hashes:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Payload hash not verified or not found: {norm}")
+        return self.verified_payload_hashes[norm]
+
+    @gl.public.view
+    def is_payload_hash_verified(self, payload_hash: str) -> bool:
+        clean = payload_hash.strip().lower()
+        norm = clean if clean.startswith("0x") else f"0x{clean}"
+        return norm in self.verified_payload_hashes
+
+    @gl.public.view
+    def get_latest_verified_hash(self) -> str:
+        return self.latest_verified_hash

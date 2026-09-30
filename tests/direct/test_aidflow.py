@@ -1,5 +1,6 @@
 import json
 import pytest
+import hashlib
 
 def to_hex(addr):
     if hasattr(addr, "as_hex"):
@@ -824,4 +825,120 @@ def test_multiple_contributors_refund_accounting(
     # Owner cannot double claim
     with direct_vm.expect_revert("No claimable refund balance"):
         contract.claim_refund()
+
+
+# =============================================================================
+# PAYLOAD HASH BINDING & PROPOSAL VERIFICATION TESTS
+# =============================================================================
+
+def test_payload_hash_correct_payload_and_hash_succeeds(direct_vm, direct_deploy, direct_alice):
+    """Proves: correct payload + correct hash succeeds."""
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/aidflow.py")
+
+    payload = json.dumps({
+        "proposal_id": 1,
+        "title": "Clean Water Distribution Project",
+        "budget": 50000000000000000000,
+        "recipient": "0x0202020202020202020202020202020202020202",
+        "deliverables": ["Drill 2 boreholes", "Install solar filtration"]
+    }, sort_keys=True)
+
+    correct_hash = "0x" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    verified_hash = contract.verify_proposal(payload, correct_hash)
+    assert verified_hash.lower() == correct_hash.lower()
+    assert contract.is_payload_hash_verified(correct_hash)
+
+
+def test_payload_hash_incorrect_hash_reverts(direct_vm, direct_deploy, direct_alice):
+    """Proves: correct payload + incorrect hash reverts."""
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/aidflow.py")
+
+    payload = json.dumps({
+        "proposal_id": 1,
+        "title": "Clean Water Distribution Project",
+        "budget": 50000000000000000000
+    }, sort_keys=True)
+
+    # Valid hex format but incorrect content hash
+    incorrect_hash = "0x" + ("0" * 64)
+
+    with direct_vm.expect_revert("Payload hash mismatch"):
+        contract.verify_proposal(payload, incorrect_hash)
+
+
+def test_payload_hash_modified_payload_original_hash_reverts(direct_vm, direct_deploy, direct_alice):
+    """Proves: modified payload + original hash reverts."""
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/aidflow.py")
+
+    original_payload = json.dumps({
+        "proposal_id": 1,
+        "title": "Clean Water Distribution Project",
+        "budget": 50000000000000000000
+    }, sort_keys=True)
+    original_hash = "0x" + hashlib.sha256(original_payload.encode("utf-8")).hexdigest()
+
+    # Modified payload (attacker changed budget or title)
+    modified_payload = json.dumps({
+        "proposal_id": 1,
+        "title": "Clean Water Distribution Project (TAMPERED)",
+        "budget": 99999999999999999999
+    }, sort_keys=True)
+
+    with direct_vm.expect_revert("Payload hash mismatch"):
+        contract.verify_proposal(modified_payload, original_hash)
+
+
+def test_payload_hash_malformed_hash_reverts(direct_vm, direct_deploy, direct_alice):
+    """Proves: malformed hash reverts across invalid length, characters, and types."""
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/aidflow.py")
+
+    payload = json.dumps({"key": "value"})
+
+    # Case 1: Arbitrary non-hex string
+    with direct_vm.expect_revert("Malformed payload hash"):
+        contract.verify_proposal(payload, "not-a-valid-hex-hash")
+
+    # Case 2: Truncated hash (length 10)
+    with direct_vm.expect_revert("Malformed payload hash"):
+        contract.verify_proposal(payload, "0x12345678")
+
+    # Case 3: Non-hex characters in 64-char string (contains 'z')
+    with direct_vm.expect_revert("Malformed payload hash"):
+        contract.verify_proposal(payload, "0x" + ("z" * 64))
+
+    # Case 4: Empty string
+    with direct_vm.expect_revert("Malformed payload hash"):
+        contract.verify_proposal(payload, "")
+
+
+def test_payload_hash_stored_hash_equals_independently_computed_hash(direct_vm, direct_deploy, direct_alice):
+    """Proves: stored hash equals the independently computed hash."""
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/aidflow.py")
+
+    payload = json.dumps({
+        "proposal_id": 42,
+        "target": "Distribute 100 blankets and sanitation packs",
+        "beneficiaries": 400
+    }, sort_keys=True)
+
+    independent_computed_hash = "0x" + hashlib.sha256(payload.encode("utf-8")).hexdigest().lower()
+
+    # Verify and store hash
+    ret_hash = contract.verify_proposal(payload, independent_computed_hash)
+    assert ret_hash.lower() == independent_computed_hash
+
+    # Query stored hash directly from contract state
+    stored_hash = contract.get_verified_payload_hash(independent_computed_hash)
+    latest_hash = contract.get_latest_verified_hash()
+
+    assert stored_hash.lower() == independent_computed_hash
+    assert latest_hash.lower() == independent_computed_hash
+    assert contract.is_payload_hash_verified(independent_computed_hash)
+
 

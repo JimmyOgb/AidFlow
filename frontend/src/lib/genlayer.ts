@@ -448,3 +448,29 @@ export async function genlayerCall(method: string, args: any[] = []): Promise<an
     return null;
   }
 }
+
+/**
+ * Consensus-backed write submission for verify_proposal.
+ * Submits strictly via client.writeContract (canonical write path),
+ * obtains actual GenLayer transaction ID, tracks full lifecycle,
+ * and requires authoritative isSuccessful(receipt) before completing.
+ */
+export async function submitVerifyProposalWrite({
+  payloadJson,
+  payloadHash,
+  onStatusChange,
+  onTrackingUpdate,
+}: {
+  payloadJson: string;
+  payloadHash: string;
+  onStatusChange?: (state: TxLifecycleState, message?: string) => void;
+  onTrackingUpdate?: (tracking: GenLayerTxTracking) => void;
+}) {
+  return await submitGenLayerWrite({
+    functionName: "verify_proposal",
+    args: [payloadJson, payloadHash],
+    onStatusChange,
+    onTrackingUpdate,
+  });
+}
+
