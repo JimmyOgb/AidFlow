@@ -1,5 +1,5 @@
 import { createClient, chains, isSuccessful } from "genlayer-js";
-import deployedConfig from "../contracts/deployed_contract.json";
+import deployedConfig from "../contracts/deployed_contract.json" with { type: "json" };
 
 export const GENLAYER_STUDIONET = {
   id: 61999,
@@ -174,8 +174,8 @@ export async function switchToStudioNet(): Promise<void> {
   }
 }
 
-export async function readEscrowBalance(): Promise<bigint> {
-  const client = getGenLayerClient();
+export async function readEscrowBalance(clientOverride?: any): Promise<bigint> {
+  const client = clientOverride || getGenLayerClient();
   const contract = getContractAddress();
   try {
     const balance = await client.getBalance({ address: contract as `0x${string}` });
@@ -186,9 +186,9 @@ export async function readEscrowBalance(): Promise<bigint> {
   }
 }
 
-export async function readNativeBalance(addr: string): Promise<bigint> {
+export async function readNativeBalance(addr: string, clientOverride?: any): Promise<bigint> {
   if (!addr || !addr.startsWith("0x")) return BigInt(0);
-  const client = getGenLayerClient();
+  const client = clientOverride || getGenLayerClient();
   try {
     const balance = await client.getBalance({ address: addr as `0x${string}` });
     return BigInt(balance);
@@ -198,6 +198,17 @@ export async function readNativeBalance(addr: string): Promise<bigint> {
   }
 }
 
+export interface GenLayerWriteParams {
+  functionName: string;
+  args?: any[];
+  value?: bigint;
+  leaderOnly?: boolean;
+  onStatusChange?: (state: TxLifecycleState, message?: string) => void;
+  onTrackingUpdate?: (tracking: GenLayerTxTracking) => void;
+  client?: any;
+  account?: any;
+}
+
 export async function submitGenLayerWrite({
   functionName,
   args = [],
@@ -205,14 +216,9 @@ export async function submitGenLayerWrite({
   leaderOnly = false,
   onStatusChange,
   onTrackingUpdate,
-}: {
-  functionName: string;
-  args?: any[];
-  value?: bigint;
-  leaderOnly?: boolean;
-  onStatusChange?: (state: TxLifecycleState, message?: string) => void;
-  onTrackingUpdate?: (tracking: GenLayerTxTracking) => void;
-}): Promise<{
+  client: customClient,
+  account: customAccount,
+}: GenLayerWriteParams): Promise<{
   txId: string;
   evmHash?: string;
   receipt: any;
@@ -220,11 +226,24 @@ export async function submitGenLayerWrite({
   statusName: string;
   resultName: string;
   executionResultName: string;
+  decisionReceipt?: any;
 }> {
-  const { address, chainId } = await requestWalletConnection();
+  let client: any;
+  if (customClient) {
+    client = customClient;
+  } else if (customAccount) {
+    client = createClient({
+      chain: chains.studionet,
+      endpoint: deployedConfig.rpcUrl || "https://studio.genlayer.com/api",
+      account: customAccount,
+    });
+  } else {
+    const { address, chainId } = await requestWalletConnection();
 
-  if (chainId !== GENLAYER_STUDIONET.id) {
-    await switchToStudioNet();
+    if (chainId !== GENLAYER_STUDIONET.id) {
+      await switchToStudioNet();
+    }
+    client = getGenLayerClient(address);
   }
 
   const contract = getContractAddress();
@@ -233,8 +252,6 @@ export async function submitGenLayerWrite({
   }
 
   onStatusChange?.("AWAITING_WALLET", "Please approve the transaction in your wallet...");
-
-  const client = getGenLayerClient(address);
 
   let txId: string;
   try {
@@ -281,11 +298,12 @@ export async function submitGenLayerWrite({
 
   // Track transaction lifecycle with GenLayer client
   let receipt: any = null;
+  let decisionReceipt: any = null;
 
   try {
     // 1. Wait for decision (responsive consensus state)
     try {
-      const decisionReceipt = await client.waitForDecision({
+      decisionReceipt = await client.waitForDecision({
         hash: txId as any,
         interval: 2000,
         retries: 30,
@@ -352,6 +370,7 @@ export async function submitGenLayerWrite({
       statusName,
       resultName,
       executionResultName,
+      decisionReceipt,
     };
   }
 
@@ -372,6 +391,7 @@ export async function submitGenLayerWrite({
       statusName,
       resultName,
       executionResultName,
+      decisionReceipt,
     };
   }
 
@@ -385,6 +405,7 @@ export async function submitGenLayerWrite({
     statusName,
     resultName,
     executionResultName,
+    decisionReceipt,
   };
 }
 
@@ -419,8 +440,8 @@ export async function pollExistingGenLayerTx(
 }
 
 // Low-level GenLayer StudioNet contract reader using client.readContract
-export async function genlayerCall(method: string, args: any[] = []): Promise<any> {
-  const client = getGenLayerClient();
+export async function genlayerCall(method: string, args: any[] = [], clientOverride?: any): Promise<any> {
+  const client = clientOverride || getGenLayerClient();
   const contract = getContractAddress();
 
   if (!contract || contract === "0x5FbDB2315678afecb367f032d93F642f64180aa3" || contract.length !== 42) {
