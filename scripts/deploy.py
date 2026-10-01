@@ -81,13 +81,13 @@ def main():
     tx_hash = None
     for line in deploy_out.splitlines():
         line_clean = line.strip()
-        if "contract address" in line_clean.lower():
+        if "contract address" in line_clean.lower() or "recipient:" in line_clean.lower():
             parts = line_clean.split(":")
             if len(parts) >= 2:
-                candidate = parts[-1].strip().strip("'").strip('"')
+                candidate = parts[-1].strip().strip("'").strip('"').strip(",")
                 if candidate.startswith("0x") and len(candidate) == 42:
                     contract_address = candidate
-        if "transaction hash" in line_clean.lower():
+        if "transaction hash" in line_clean.lower() or "tx_id:" in line_clean.lower():
             parts = line_clean.split(":")
             if len(parts) >= 2:
                 candidate = parts[-1].strip().strip("'").strip('"').strip(",")

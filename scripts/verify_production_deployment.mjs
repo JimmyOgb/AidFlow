@@ -37,14 +37,20 @@ async function verifyProduction() {
   let duplicateEvmHashFound = false;
   let guardedEvmHashFound = false;
 
+  let staleAddressFound = false;
+
   for (const chunkPath of chunkPaths) {
     const chunkUrl = `https://aid-flow1.vercel.app${chunkPath}`;
     const chunkRes = await fetch(chunkUrl);
     const chunkCode = await chunkRes.text();
 
-    if (chunkCode.includes("0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3")) {
+    if (chunkCode.toLowerCase().includes("0xb7278a61aa25c888815afc32ad3cc52ff24fe575")) {
       contractTargetFound = true;
-      console.log(`[PASS] Correct contract address 0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3 verified in: ${chunkPath}`);
+      console.log(`[PASS] Correct contract address 0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575 verified in: ${chunkPath}`);
+    }
+    if (chunkCode.toLowerCase().includes("0xb7ddb3322403f15ba9648c96e2b60cb391d53ae3")) {
+      staleAddressFound = true;
+      console.warn(`[WARN] Stale contract address 0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3 detected in: ${chunkPath}`);
     }
     if (chunkCode.includes("writeContract")) {
       writeContractFound = true;
@@ -75,7 +81,8 @@ async function verifyProduction() {
   console.log("\n--------------------------------------------------------------------------------");
   console.log(" PRODUCTION DEPLOYMENT VERIFICATION SUMMARY");
   console.log("--------------------------------------------------------------------------------");
-  console.log(`Contract Address Target:      ${contractTargetFound ? "VERIFIED (0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3)" : "MISSING"}`);
+  console.log(`Contract Address Target:      ${contractTargetFound ? "VERIFIED (0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575)" : "MISSING"}`);
+  console.log(`Stale Address Clean:          ${!staleAddressFound ? "CONFIRMED (Zero occurrences)" : "FAILED (Stale address present)"}`);
   console.log(`writeContract Implementation: ${writeContractFound ? "VERIFIED" : "MISSING"}`);
   console.log(`waitForDecision Lifecycle:    ${waitForDecisionFound ? "VERIFIED" : "MISSING"}`);
   console.log(`waitForFinalization Final:    ${waitForFinalizationFound ? "VERIFIED" : "MISSING"}`);

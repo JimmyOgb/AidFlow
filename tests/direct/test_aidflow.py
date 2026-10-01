@@ -942,3 +942,189 @@ def test_payload_hash_stored_hash_equals_independently_computed_hash(direct_vm, 
     assert contract.is_payload_hash_verified(independent_computed_hash)
 
 
+def test_real_escrow_accounting_payout_and_refund(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie, direct_owner, sample_campaign_args
+):
+    """
+    Proves Real Escrow Accounting and Authorization Protections:
+    - Organization EOA balance increases after claim_payout
+    - Contract balance decreases by the exact payout
+    - org_claimable becomes zero
+    - Contributor EOA balance increases after claim_refund
+    - Contract balance decreases by the exact refund
+    - donor_claimable becomes zero
+    - Second claims fail
+    - Unauthorized callers cannot claim payout or refund
+    - Unauthorized recipients cannot receive funds (strict sender binding)
+    """
+    # 1. Alice creates campaign with Bob as Organization
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/aidflow.py")
+    cid = contract.create_campaign(
+        sample_campaign_args["organization"],
+        sample_campaign_args["title"],
+        sample_campaign_args["description"],
+        sample_campaign_args["milestone_amounts"],
+        sample_campaign_args["milestone_targets"],
+        sample_campaign_args["milestone_deadlines"],
+        sample_campaign_args["milestone_policies"],
+    )
+
+    # 2. Real funding: Alice deposits 70 GEN, Charlie deposits 30 GEN
+    direct_vm.deal(direct_alice, 200 * 10**18)
+    direct_vm.deal(direct_bob, 50 * 10**18)
+    direct_vm.deal(direct_charlie, 100 * 10**18)
+    direct_vm.deal(direct_owner, 100 * 10**18)
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = 70 * 10**18
+    contract.fund_campaign(cid)
+
+    direct_vm.sender = direct_charlie
+    direct_vm.value = 30 * 10**18
+    contract.fund_campaign(cid)
+
+    c_bytes = direct_vm._to_bytes(direct_vm._contract_address)
+    bob_bytes = direct_vm._to_bytes(direct_bob)
+    alice_bytes = direct_vm._to_bytes(direct_alice)
+    charlie_bytes = direct_vm._to_bytes(direct_charlie)
+    owner_bytes = direct_vm._to_bytes(direct_owner)
+
+    assert direct_vm._balances[c_bytes] == 100 * 10**18
+
+    # 3. Bob submits evidence for milestone 0 and passes adjudication
+    direct_vm.sender = direct_bob
+    contract.submit_evidence(cid, 0, "RECEIPT", "https://evidence.aidflow.org/rec1.pdf", "0x1", "Itemized food receipt", "2026-09-20T12:00:00Z")
+
+    direct_vm.mock_llm(
+        r".*humanitarian aid verification validator.*",
+        json.dumps({
+            "decision": "PASS",
+            "completion_percentage": 100,
+            "evidence_quality": "HIGH",
+            "criteria_met": 1,
+            "criteria_total": 1,
+            "reasoning": "Purchase receipts match requirements"
+        })
+    )
+    contract.adjudicate_milestone(cid, 0)
+
+    # 4. Release milestone 0 tranche (30 GEN)
+    contract.release_milestone(cid, 0)
+    assert contract.get_claimable_balances(direct_bob)["org_claimable"] == 30 * 10**18
+
+    # 5. Unauthorized callers cannot claim payout
+    # Case 5a: Contributor Alice attempts to claim payout
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("No claimable payout balance"):
+        contract.claim_payout()
+
+    # Case 5b: Contributor Charlie attempts to claim payout
+    direct_vm.sender = direct_charlie
+    with direct_vm.expect_revert("No claimable payout balance"):
+        contract.claim_payout()
+
+    # Case 5c: Third-party Owner attempts to claim payout
+    direct_vm.sender = direct_owner
+    with direct_vm.expect_revert("No claimable payout balance"):
+        contract.claim_payout()
+
+    # Verify balances were entirely untouched by unauthorized attempts
+    assert direct_vm._balances[c_bytes] == 100 * 10**18
+    assert contract.get_claimable_balances(direct_bob)["org_claimable"] == 30 * 10**18
+
+    # 6. Organization Bob claims payout
+    direct_vm.sender = direct_bob
+    bob_bal_before = direct_vm._balances[bob_bytes]
+    c_bal_before = direct_vm._balances[c_bytes]
+
+    payout_amt = contract.claim_payout()
+    assert payout_amt == 30 * 10**18
+
+    # Organization EOA balance increases after claim_payout
+    assert direct_vm._balances[bob_bytes] == bob_bal_before + 30 * 10**18
+    # Contract balance decreases by the exact payout
+    assert direct_vm._balances[c_bytes] == c_bal_before - 30 * 10**18
+    # org_claimable becomes zero
+    assert contract.get_claimable_balances(direct_bob)["org_claimable"] == 0
+
+    # 7. Second claim by Organization fails
+    with direct_vm.expect_revert("No claimable payout balance"):
+        contract.claim_payout()
+
+    # 8. Milestone 1 fails adjudication -> triggers refund flow
+    direct_vm.sender = direct_bob
+    contract.submit_evidence(cid, 1, "DELIVERY_RECORD", "https://evidence.aidflow.org/fail.pdf", "0x2", "Incomplete log", "2026-09-21T12:00:00Z")
+    direct_vm.clear_mocks()
+    direct_vm.mock_llm(
+        r".*humanitarian aid verification validator.*",
+        json.dumps({
+            "decision": "FAIL",
+            "completion_percentage": 0,
+            "evidence_quality": "LOW",
+            "criteria_met": 0,
+            "criteria_total": 1,
+            "reasoning": "No distribution occurred"
+        })
+    )
+    contract.adjudicate_milestone(cid, 1)
+
+    # Alice triggers refund (70 GEN unreleased: Alice gets 49 GEN, Charlie gets 21 GEN)
+    direct_vm.sender = direct_alice
+    contract.refund_campaign(cid)
+
+    assert contract.get_claimable_balances(direct_alice)["donor_claimable"] == 49 * 10**18
+    assert contract.get_claimable_balances(direct_charlie)["donor_claimable"] == 21 * 10**18
+
+    # 9. Unauthorized callers cannot claim refund
+    # Case 9a: Organization Bob has no claimable refund
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert("No claimable refund balance"):
+        contract.claim_refund()
+
+    # Case 9b: Third-party Owner has no claimable refund
+    direct_vm.sender = direct_owner
+    with direct_vm.expect_revert("No claimable refund balance"):
+        contract.claim_refund()
+
+    # 10. Contributor Alice claims refund
+    direct_vm.sender = direct_alice
+    alice_bal_before = direct_vm._balances[alice_bytes]
+    c_bal_before_refund = direct_vm._balances[c_bytes]
+
+    alice_refund = contract.claim_refund()
+    assert alice_refund == 49 * 10**18
+
+    # Contributor EOA balance increases after claim_refund
+    assert direct_vm._balances[alice_bytes] == alice_bal_before + 49 * 10**18
+    # Contract balance decreases by the exact refund
+    assert direct_vm._balances[c_bytes] == c_bal_before_refund - 49 * 10**18
+    # donor_claimable becomes zero
+    assert contract.get_claimable_balances(direct_alice)["donor_claimable"] == 0
+
+    # 11. Alice second refund claim fails
+    with direct_vm.expect_revert("No claimable refund balance"):
+        contract.claim_refund()
+
+    # 12. Contributor Charlie claims refund
+    direct_vm.sender = direct_charlie
+    charlie_bal_before = direct_vm._balances[charlie_bytes]
+    c_bal_before_charlie = direct_vm._balances[c_bytes]
+
+    charlie_refund = contract.claim_refund()
+    assert charlie_refund == 21 * 10**18
+
+    # Contributor Charlie EOA balance increases
+    assert direct_vm._balances[charlie_bytes] == charlie_bal_before + 21 * 10**18
+    # Contract balance decreases to exact 0
+    assert direct_vm._balances[c_bytes] == c_bal_before_charlie - 21 * 10**18
+    assert direct_vm._balances[c_bytes] == 0
+    # donor_claimable becomes zero
+    assert contract.get_claimable_balances(direct_charlie)["donor_claimable"] == 0
+
+    # 13. Charlie second refund claim fails
+    with direct_vm.expect_revert("No claimable refund balance"):
+        contract.claim_refund()
+
+
+

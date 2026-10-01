@@ -16,8 +16,16 @@ from gltest.direct.loader import deploy_contract
 
 @pytest.fixture(autouse=True)
 def setup_transfer_hook(direct_vm):
-    """Auto-install cross-contract message hook to track native GEN balance transfers."""
+    """Auto-install cross-contract/EOA message hook to track native GEN balance transfers."""
     def transfer_hook(vm, req):
+        if "EthSend" in req:
+            val = int(req["EthSend"].get("value", 0))
+            if val > 0:
+                tgt = vm._to_bytes(req["EthSend"]["address"])
+                src = vm._to_bytes(vm._contract_address)
+                vm._balances[src] = vm._balances.get(src, 0) - val
+                vm._balances[tgt] = vm._balances.get(tgt, 0) + val
+            return {"ok": None}
         if "PostMessage" in req:
             val = int(req["PostMessage"].get("value", 0))
             if val > 0:

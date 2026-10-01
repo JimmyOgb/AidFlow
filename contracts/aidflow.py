@@ -132,6 +132,15 @@ def _addr_hex(addr: Any) -> str:
     return str(addr)
 
 
+@gl.evm.contract_interface
+class _WalletRecipient:
+    class View:
+        pass
+
+    class Write:
+        pass
+
+
 class AidFlow(gl.Contract):
     campaign_count: u256
     campaigns: TreeMap[u256, Campaign]
@@ -702,8 +711,8 @@ Respond strictly in valid JSON format with this exact schema:
         # Safely zero ledger BEFORE transferring (checks-effects-interactions pattern to prevent reentrancy / double claim)
         self.org_claimable[sender] = 0
 
-        # Transfer exact native GEN amount to caller using supported GenLayer native transfer mechanism
-        gl.get_contract_at(sender).emit_transfer(value=amount)
+        # Transfer exact native GEN amount to caller using supported GenLayer EVM / EOA transfer mechanism
+        _WalletRecipient(sender).emit_transfer(value=amount)
 
         return amount
 
@@ -717,8 +726,8 @@ Respond strictly in valid JSON format with this exact schema:
         # Safely zero ledger BEFORE transferring (checks-effects-interactions pattern to prevent double refund)
         self.donor_claimable[sender] = 0
 
-        # Transfer exact native GEN amount to caller using supported GenLayer native transfer mechanism
-        gl.get_contract_at(sender).emit_transfer(value=amount)
+        # Transfer exact native GEN amount to caller using supported GenLayer EVM / EOA transfer mechanism
+        _WalletRecipient(sender).emit_transfer(value=amount)
 
         return amount
 

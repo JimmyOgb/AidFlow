@@ -4,7 +4,7 @@ import crypto from "crypto";
 
 const require = createRequire(import.meta.url);
 
-const CONTRACT_ADDRESS = "0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3";
+const CONTRACT_ADDRESS = "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575";
 const RPC_URL = "https://studio.genlayer.com/api";
 const CHAIN_ID = 61999;
 

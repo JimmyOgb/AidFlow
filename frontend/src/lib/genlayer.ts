@@ -96,7 +96,7 @@ export function clearPendingTx(): void {
 }
 
 export function getContractAddress(): string {
-  return deployedConfig.contract_address || "0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3";
+  return deployedConfig.contract_address || "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575";
 }
 
 export function formatGEN(atto: bigint | number | string | null | undefined): string {
