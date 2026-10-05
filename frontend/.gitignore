@@ -5,3 +5,6 @@ build/
 dist/
 .env*.local
 *.log
+
+.vercel
+.env*

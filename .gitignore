@@ -57,3 +57,10 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+.vercel
+.env*
+
+# Obsolete Bradbury deployment scripts
+scripts/deploy_aidflow_bradbury.mjs
+scripts/deploy_bradbury.mjs
