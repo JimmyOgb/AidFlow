@@ -253,7 +253,7 @@ AidFlow is deployed on GenLayer StudioNet:
 * **Chain ID**: `61999`
 * **RPC Endpoint**: `https://studio.genlayer.com/api`
 * **Block Explorer**: [https://genlayer-explorer.vercel.app](https://genlayer-explorer.vercel.app)
-* **Current AidFlow Contract**: [`0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575`](https://studio.genlayer.com/?import-contract=0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575)
+* **Current AidFlow Contract**: [`0x5Df5315274652629aFf67FC2D78921c5096Fe3ee`](https://studio.genlayer.com/?import-contract=0x5Df5315274652629aFf67FC2D78921c5096Fe3ee)
 * **Previous AidFlow Contract (superseded)**: [`0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3`](https://studio.genlayer.com/?import-contract=0xB7ddB3322403F15ba9648c96E2B60Cb391d53Ae3)
 * **Historical AidFlow Contract (superseded)**: [`0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68`](https://genlayer-explorer.vercel.app/address/0x48bb82c1619a9fdd8aa32a51e6b8c8d8b6da4e68)
 * **Current deployment transaction**: `0x16c6ce336301ee3b1e9fd822289300d49cb57a2bae9ea94931bbc529c0641ea2`

@@ -44,9 +44,9 @@ async function verifyProduction() {
     const chunkRes = await fetch(chunkUrl);
     const chunkCode = await chunkRes.text();
 
-    if (chunkCode.toLowerCase().includes("0xb7278a61aa25c888815afc32ad3cc52ff24fe575")) {
+    if (chunkCode.toLowerCase().includes("0x5df5315274652629aff67fc2d78921c5096fe3ee")) {
       contractTargetFound = true;
-      console.log(`[PASS] Correct contract address 0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575 verified in: ${chunkPath}`);
+      console.log(`[PASS] Correct contract address 0x5Df5315274652629aFf67FC2D78921c5096Fe3ee verified in: ${chunkPath}`);
     }
     if (chunkCode.toLowerCase().includes("0xb7ddb3322403f15ba9648c96e2b60cb391d53ae3")) {
       staleAddressFound = true;
@@ -81,7 +81,7 @@ async function verifyProduction() {
   console.log("\n--------------------------------------------------------------------------------");
   console.log(" PRODUCTION DEPLOYMENT VERIFICATION SUMMARY");
   console.log("--------------------------------------------------------------------------------");
-  console.log(`Contract Address Target:      ${contractTargetFound ? "VERIFIED (0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575)" : "MISSING"}`);
+  console.log(`Contract Address Target:      ${contractTargetFound ? "VERIFIED (0x5Df5315274652629aFf67FC2D78921c5096Fe3ee)" : "MISSING"}`);
   console.log(`Stale Address Clean:          ${!staleAddressFound ? "CONFIRMED (Zero occurrences)" : "FAILED (Stale address present)"}`);
   console.log(`writeContract Implementation: ${writeContractFound ? "VERIFIED" : "MISSING"}`);
   console.log(`waitForDecision Lifecycle:    ${waitForDecisionFound ? "VERIFIED" : "MISSING"}`);

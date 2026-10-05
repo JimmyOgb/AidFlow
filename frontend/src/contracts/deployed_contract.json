@@ -1,10 +1,10 @@
 {
   "network": "studionet",
   "contract": "AidFlow",
-  "contract_address": "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575",
+  "contract_address": "0x5Df5315274652629aFf67FC2D78921c5096Fe3ee",
   "chainId": 61999,
   "rpcUrl": "https://studio.genlayer.com/api",
   "explorerUrl": "https://studio.genlayer.com/",
-  "transaction_hash": "0x16c6ce336301ee3b1e9fd822289300d49cb57a2bae9ea94931bbc529c0641ea2",
+  "transaction_hash": "0x6dd3e00ce9025bf43e0022da16ddf8228ea937d09bcad87b9edc76ac18012e8b",
   "contract_file": "contracts/aidflow.py"
 }

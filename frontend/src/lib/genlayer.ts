@@ -1,5 +1,67 @@
-import { createClient, chains, isSuccessful } from "genlayer-js";
+import { createClient, chains } from "genlayer-js";
 import deployedConfig from "../contracts/deployed_contract.json" with { type: "json" };
+
+// genlayer-js 1.1.8 does not export `isSuccessful` and does not populate
+// `resultName` / `txExecutionResultName` for StudioNet receipts. Derive them
+// authoritatively from the raw receipt returned by the StudioNet RPC.
+const TX_RESULT_NAMES: Record<number, string> = {
+  0: "IDLE",
+  1: "AGREE",
+  2: "DISAGREE",
+  3: "TIMEOUT",
+  4: "DETERMINISTIC_VIOLATION",
+  5: "NO_MAJORITY",
+  6: "MAJORITY_AGREE",
+  7: "MAJORITY_DISAGREE",
+};
+
+const TX_STATUS_NAMES: Record<number, string> = {
+  0: "UNINITIALIZED",
+  1: "PENDING",
+  2: "PROPOSING",
+  3: "COMMITTING",
+  4: "REVEALING",
+  5: "ACCEPTED",
+  6: "UNDETERMINED",
+  7: "FINALIZED",
+  8: "CANCELED",
+  9: "APPEAL_REVEALING",
+  10: "APPEAL_COMMITTING",
+  11: "READY_TO_FINALIZE",
+  12: "VALIDATORS_TIMEOUT",
+  13: "LEADER_TIMEOUT",
+};
+
+export function deriveStatusName(tx: any): string {
+  if (tx?.statusName) return String(tx.statusName);
+  const n = Number(tx?.status);
+  return Number.isFinite(n) && TX_STATUS_NAMES[n] ? TX_STATUS_NAMES[n] : String(tx?.status ?? "UNKNOWN");
+}
+
+export function deriveResultName(tx: any): string {
+  if (tx?.resultName) return String(tx.resultName);
+  if (tx?.result_name) return String(tx.result_name);
+  const n = Number(tx?.result);
+  return Number.isFinite(n) && TX_RESULT_NAMES[n] ? TX_RESULT_NAMES[n] : "UNKNOWN";
+}
+
+export function deriveExecutionResultName(tx: any): string {
+  if (tx?.txExecutionResultName) return String(tx.txExecutionResultName);
+  const raw = tx?.consensus_data?.leader_receipt?.[0]?.execution_result ?? tx?.consensusData?.leader_receipt?.[0]?.execution_result;
+  if (raw === "SUCCESS" || raw === "FINISHED_WITH_RETURN") return "FINISHED_WITH_RETURN";
+  if (raw === "ERROR" || raw === "FINISHED_WITH_ERROR") return "FINISHED_WITH_ERROR";
+  return "UNKNOWN";
+}
+
+/** True only if consensus accepted/finalized with a majority AND contract execution succeeded. */
+export function isSuccessful(tx: any): boolean {
+  if (!tx) return false;
+  const status = deriveStatusName(tx);
+  if (status !== "ACCEPTED" && status !== "FINALIZED") return false;
+  const result = deriveResultName(tx);
+  if (result !== "MAJORITY_AGREE" && result !== "AGREE") return false;
+  return deriveExecutionResultName(tx) === "FINISHED_WITH_RETURN";
+}
 
 export const GENLAYER_STUDIONET = {
   id: 61999,
@@ -96,7 +158,7 @@ export function clearPendingTx(): void {
 }
 
 export function getContractAddress(): string {
-  return deployedConfig.contract_address || "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575";
+  return deployedConfig.contract_address;
 }
 
 export function formatGEN(atto: bigint | number | string | null | undefined): string {
@@ -296,35 +358,37 @@ export async function submitGenLayerWrite({
     updatedAt: Date.now(),
   });
 
-  // Track transaction lifecycle with GenLayer client
+  // Track transaction lifecycle with GenLayer client (genlayer-js 1.1.8 API)
   let receipt: any = null;
   let decisionReceipt: any = null;
 
   try {
-    // 1. Wait for decision (responsive consensus state)
+    // 1. Wait for decision (consensus reached -> ACCEPTED)
     try {
-      decisionReceipt = await client.waitForDecision({
+      decisionReceipt = await client.waitForTransactionReceipt({
         hash: txId as any,
+        status: "ACCEPTED" as any,
         interval: 2000,
-        retries: 30,
+        retries: 90,
       });
       if (decisionReceipt) {
         tracking.status = String(decisionReceipt.status);
-        tracking.statusName = decisionReceipt.statusName;
-        tracking.resultName = (decisionReceipt as any).result_name || decisionReceipt.resultName;
+        tracking.statusName = deriveStatusName(decisionReceipt);
+        tracking.resultName = deriveResultName(decisionReceipt);
         onStatusChange?.("CONSENSUS", `Decision reached: ${tracking.resultName || tracking.statusName}`);
         onTrackingUpdate?.({ ...tracking, updatedAt: Date.now() });
       }
     } catch (decisionErr: any) {
       // Continue to finalization even if early decision polling timed out
-      console.warn("waitForDecision note:", decisionErr.message);
+      console.warn("decision wait note:", decisionErr.message);
     }
 
-    // 2. Wait for finalization (durable on-chain settlement)
-    receipt = await client.waitForFinalization({
+    // 2. Wait for finalization (durable on-chain settlement; native GEN transfers are delivered here)
+    receipt = await client.waitForTransactionReceipt({
       hash: txId as any,
+      status: "FINALIZED" as any,
       interval: 2000,
-      retries: 45,
+      retries: 90,
     });
   } catch (finErr: any) {
     // Fetch raw transaction state to see where it landed
@@ -337,10 +401,10 @@ export async function submitGenLayerWrite({
     }
   }
 
-  const statusName = receipt.statusName || String(receipt.status);
-  const resultName = (receipt as any).result_name || receipt.resultName || "UNKNOWN";
-  const executionResultName = receipt.txExecutionResultName || "UNKNOWN";
-  const success = Boolean(isSuccessful(receipt));
+  const statusName = deriveStatusName(receipt);
+  const resultName = deriveResultName(receipt);
+  const executionResultName = deriveExecutionResultName(receipt);
+  const success = isSuccessful(receipt);
 
   tracking.status = String(receipt.status);
   tracking.statusName = statusName;
@@ -419,10 +483,10 @@ export async function pollExistingGenLayerTx(
     throw new Error(`Transaction ${txId} not found on StudioNet`);
   }
 
-  const statusName = tx.statusName || String(tx.status);
-  const resultName = (tx as any).result_name || tx.resultName || "UNKNOWN";
-  const executionResultName = tx.txExecutionResultName || "UNKNOWN";
-  const success = Boolean(isSuccessful(tx));
+  const statusName = deriveStatusName(tx);
+  const resultName = deriveResultName(tx);
+  const executionResultName = deriveExecutionResultName(tx);
+  const success = isSuccessful(tx);
 
   const tracking: GenLayerTxTracking = {
     txId,
