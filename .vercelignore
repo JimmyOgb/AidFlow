@@ -1,0 +1,9 @@
+.chrome-e2e-profile
+.chrome-test-profile
+artifacts
+tests
+.pytest_cache
+.codex
+frontend/node_modules
+frontend/.next
+node_modules

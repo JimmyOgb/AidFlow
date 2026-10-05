@@ -1,0 +1,127 @@
+{
+  "mode": "pass",
+  "contract": "0x5Df5315274652629aFf67FC2D78921c5096Fe3ee",
+  "rpc": "https://studio.genlayer.com/api",
+  "chainId": 61999,
+  "steps": [
+    {
+      "functionName": "create_campaign",
+      "txId": "0x38345a94ffd29d62073432fdffd81c9d3a58e9de426f73610adcbbfc9291af65",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    },
+    {
+      "functionName": "fund_campaign",
+      "txId": "0x1114ca52a1fbe713499ae34396c19d67c5b3c1ec07535df50195d818fcd48355",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    },
+    {
+      "functionName": "submit_evidence",
+      "txId": "0x0652ede8d31f835fff8b8588102f95bad6529417a60a71639341d3ef99b508d3",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    },
+    {
+      "functionName": "submit_evidence",
+      "txId": "0xfe34f9f4832f9ef978ebc0066b322348fc4cfe71ac7621ea5d30ef0a8cd2491e",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    },
+    {
+      "functionName": "submit_evidence",
+      "txId": "0xa0e8049c44b6efaeae60c1ecbcfb4587fcda339660fe27afc69873e2399af406",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    },
+    {
+      "functionName": "adjudicate_milestone",
+      "txId": "0x4d6ad85c790b5523a7aa4010e2bf724e3255164b3349f29ae11ab9c300f9c0c8",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    },
+    {
+      "functionName": "release_milestone",
+      "txId": "0xa4f39c3b75c0270ab1af8b824381d9fb86c3d25d01808673e5436b79a97603d4",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    },
+    {
+      "functionName": "claim_payout",
+      "txId": "0xdbc1a2a9ab2209fb87fec726b9aa53d0a5883e77c0cee8782c6a173dc82b2d45",
+      "status": "FINALIZED",
+      "result": "MAJORITY_AGREE",
+      "execution": "FINISHED_WITH_RETURN",
+      "isSuccess": true,
+      "validators": 5,
+      "votes": "5/5"
+    }
+  ],
+  "donor": "0xE4220c4b71877bb94EB173f467ef5c5557017085",
+  "org": "0x7e48a806f63d6020057f98177105d686e835b976",
+  "campaignId": "4",
+  "adjudicationStatus": "PASSED",
+  "pre": {
+    "claimable": {
+      "org_claimable": "100000000000000000",
+      "donor_claimable": "0"
+    },
+    "escrow": "200000000000000000",
+    "orgEOA": "0"
+  },
+  "post": {
+    "claimable": {
+      "org_claimable": "0",
+      "donor_claimable": "0"
+    },
+    "escrow": "100000000000000000",
+    "orgEOA": "100000000000000000"
+  },
+  "checks": {
+    "eoaDelta": "100000000000000000",
+    "eoaDeltaEqualsClaimable": true,
+    "escrowDelta": "-100000000000000000",
+    "escrowDecreasedByClaim": true,
+    "claimableZero": true
+  },
+  "secondClaim": {
+    "functionName": "claim_payout",
+    "txId": "0x09c4e3e07d0e4e726d9de0f5926eaf999c31ec3f16139b1be3d11b6fd5b53047",
+    "status": "FINALIZED",
+    "result": "MAJORITY_AGREE",
+    "execution": "FINISHED_WITH_ERROR",
+    "isSuccess": false,
+    "validators": 5,
+    "votes": "5/5",
+    "rejected": true,
+    "eoaUnchanged": true
+  }
+}

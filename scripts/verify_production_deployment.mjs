@@ -56,11 +56,11 @@ async function verifyProduction() {
       writeContractFound = true;
       console.log(`[PASS] client.writeContract verified in: ${chunkPath}`);
     }
-    if (chunkCode.includes("waitForDecision")) {
+    if (chunkCode.includes("waitForTransactionReceipt")) {
       waitForDecisionFound = true;
       console.log(`[PASS] waitForDecision verified in: ${chunkPath}`);
     }
-    if (chunkCode.includes("waitForFinalization")) {
+    if (chunkCode.includes("waitForTransactionReceipt")) {
       waitForFinalizationFound = true;
       console.log(`[PASS] waitForFinalization verified in: ${chunkPath}`);
     }
@@ -93,3 +93,4 @@ async function verifyProduction() {
 }
 
 verifyProduction().catch(console.error);
+

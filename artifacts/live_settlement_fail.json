@@ -1,0 +1,36 @@
+{
+  "mode": "fail",
+  "contract": "0x5Df5315274652629aFf67FC2D78921c5096Fe3ee",
+  "rpc": "https://studio.genlayer.com/api",
+  "chainId": 61999,
+  "steps": [],
+  "campaignId": "3",
+  "donor": "0xE4220c4b71877bb94EB173f467ef5c5557017085",
+  "pre": {
+    "donorEOA": "997779440503506922349093"
+  },
+  "post": {
+    "donorEOA": "997779540503506922349093",
+    "escrow": "100000000000000000",
+    "claimable": {
+      "org_claimable": "0",
+      "donor_claimable": "0"
+    }
+  },
+  "checks": {
+    "eoaDelta": "100000000000000000",
+    "claimableZero": true
+  },
+  "secondClaim": {
+    "functionName": "claim_refund",
+    "txId": "0x6e01e721e8ef9778b7301433ca6c50455855de0e18cebc97d43cb94332fd7b5f",
+    "status": "FINALIZED",
+    "result": "MAJORITY_AGREE",
+    "execution": "FINISHED_WITH_ERROR",
+    "isSuccess": false,
+    "validators": 5,
+    "votes": "5/5",
+    "rejected": true,
+    "eoaUnchanged": true
+  }
+}

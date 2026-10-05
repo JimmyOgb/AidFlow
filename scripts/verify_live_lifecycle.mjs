@@ -1,6 +1,7 @@
-import { createAccount, createClient, chains, isSuccessful } from "../frontend/node_modules/genlayer-js/dist/index.js";
+import { createAccount, createClient, chains } from "../frontend/node_modules/genlayer-js/dist/index.js";
 import { createRequire } from "module";
 import {
+  isSuccessful,
   submitGenLayerWrite,
   readEscrowBalance,
   readNativeBalance,
